@@ -88,9 +88,9 @@ Goal: the platform runs on the cluster, the libraries and the identity service b
 - [ ] **S00-m Publish the site on GitHub Pages** · docs
   A workflow builds the playbook on every push to `main` of the docs repository and deploys to Pages; the other repositories trigger it with a `repository_dispatch` after a docs change (from S2, when they have CI).
   Done when: `https://ffetih.github.io/ff-logistic-docs/` shows the site.
-- [ ] **S00-n Keep each application's deploy values next to its code** · shared, runtime
+- [x] **S00-n Keep each application's deploy values next to its code** · shared, runtime
   `deploy/apps/identity` moves from runtime to shared; the `identity` Application becomes multi-source (the chart from runtime, `$values` from shared). One rule for every application from now on: runtime holds the chart and the Application; the values, including the image tag, live in the repository that builds the image. CI then never writes to another repository (S2).
-  Done when: `argocd app diff identity` is empty after the move.
+  Done when: `argocd app diff identity` is empty after the move. Merge shared before runtime: until shared has `deploy/apps/identity`, the new Application cannot render.
 
 ## S1 — Walking skeleton and the switch
 
