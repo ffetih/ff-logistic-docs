@@ -1,0 +1,36 @@
+{{!-- Replaces the default UI's sample menu (Home, Products, Services, Download). --}}
+<header class="header">
+  <nav class="navbar">
+    <div class="navbar-brand">
+      <a class="navbar-item" href="{{{or site.url siteRootPath}}}">{{site.title}}</a>
+      <button class="navbar-burger" data-target="topbar-nav">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+    </div>
+    <div id="topbar-nav" class="navbar-menu">
+      <div class="navbar-end">
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/architecture.html">Architecture</a>
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/decisions.html">Decisions</a>
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/plan.html">Plan</a>
+        <div class="navbar-item has-dropdown is-hoverable">
+          <a class="navbar-link" href="https://github.com/ffetih?tab=repositories&amp;q=ff-logistic">Repositories</a>
+          <div class="navbar-dropdown">
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-docs">ff-logistic-docs</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-runtime">ff-logistic-runtime</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-base">ff-logistic-base</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-shared">ff-logistic-shared</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-modulith">ff-logistic-modulith</a>
+            <a class="navbar-item" href="https://github.com/ffetih/ff-logistic-services">ff-logistic-services</a>
+          </div>
+        </div>
+        <div class="navbar-item">
+          <span class="control">
+            <a class="button is-primary" href="https://github.com/ffetih/ff-logistic-docs">GitHub</a>
+          </span>
+        </div>
+      </div>
+    </div>
+  </nav>
+</header>

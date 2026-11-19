@@ -50,6 +50,8 @@ ui:
   bundle:
     url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
     snapshot: true
+  # Our own header and footer over the default UI's sample ones.
+  supplemental_files: ./supplemental-ui
 
 output:
   dir: ./build/site
