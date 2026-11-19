@@ -25,7 +25,7 @@ Considered:: Two independent codebases: a cleaner story for each side, twice the
 
 Problem:: With separate databases per implementation, a switch would start from empty data, and the two sides could never be checked against the same rows.
 Decision:: Both sides use `ff_logistics` and the same tables. Each area keeps its migrations under `db/migration/<area>` with its own Flyway history table, `<area>_flyway_history`. The modulith runs four migrations, one per area; each service runs its own.
-Costs:: Both sides must agree on the schema exactly, by construction (the migrations are in the cores). The services side does not get a database per service, the textbook setup; here the areas are separated by table ownership instead. Database roles per area can enforce that later.
+Costs:: Both sides must agree on the schema exactly, by construction (the migrations are in the cores). The second area to arrive in the database finds the others' tables and starts its history with a baseline row (version 0); that is Flyway's way of accepting a schema it does not own alone. The services side does not get a database per service, the textbook setup; here the areas are separated by table ownership instead. Database roles per area can enforce that later.
 Considered:: A schema per area: closer to database-per-service, and possible later without changing the cores' code.
 
 [[d4]]

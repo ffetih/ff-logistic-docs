@@ -94,32 +94,38 @@ Goal: the platform runs on the cluster, the libraries and the identity service b
 
 ## S1 — Walking skeleton and the switch
 
-Goal: an empty application on each side, reached through the same edge, switched by one commit, checked by one smoke test. Images are still imported locally (S2 publishes them).
+Goal: an empty application on each side, reached through the same edge, switched by one commit, checked by one smoke test. Images are still built locally and imported (`tools/build-local-images.sh`); S2 publishes them.
 
 - [x] **S01-01 Prove that Spring Modulith checks modules that come from jars** · docs
   A spike before the layout depends on it, kept in `spikes/modulith-modules-from-jars` with a `run.sh` that replays it: two modules in jars of their own, an application jar holding an adapter in one module's package. `ApplicationModules.of(...).verify()` finds both modules, counts the adapter as part of its module, and fails on a call into another module's internals, on a dependency the module does not allow, and on a cycle. Decision 2 holds; its record now says so.
   Done when: `run.sh` prints OK for the clean case and the three violations.
-- [ ] **S01-02 Add the domain cores, empty** · shared
-  `shared/domain/ff-domain-{standards,warehousing,transportation,routing}`: packages, a `package-info.java` naming each core's allowed dependencies (only standards), and each core's Flyway location `db/migration/<area>` with its own history table `<area>_flyway_history` (decision 3).
-  Done when: `./build.sh` in shared installs the four jars.
-- [ ] **S01-03 Add the modulith application** · modulith
-  `logistics-app`: depends on the four cores, base web, security and persistence; one Flyway run per area; `ModularityTest` verifies the modules. Health groups `liveness`, `readiness`, `release`.
-  Port: `platform/ff-logistics/ff-logistics-app` (application class, `release`, `caller`, application.yml).
-  Done when: the tests pass, and the app starts against the cluster's PostgreSQL from the IDE.
-- [ ] **S01-04 Add the three services and their gateway** · services
-  `warehousing`, `transportation`, `routing`: each one Spring Boot application with one core and its Flyway run. `gateway`: an nginx with one route table, `/api/v1/wms/**` → warehousing, `/api/v1/tms/**` → transportation, `/api/v1/geo/**` → routing.
-  Done when: each service's tests pass, and `docker run` of the gateway answers `/api/v1/*/` health through to stubs.
-- [ ] **S01-05 Add the edge Service** · runtime
-  One Service `edge` on NodePort 30081 selecting the label `ff-logistic/edge: "true"`. The modulith's pods carry it; on the services side only the gateway's pods do. The edge never changes when the implementation does.
-  Done when: `curl localhost:8081/actuator/health` answers from whichever side is running.
-- [ ] **S01-06 Add the switch** · runtime
-  `deploy/implementation.yaml` (`active: modulith`) and an ApplicationSet with a Git file generator: it renders the Applications of the active implementation only, each multi-source (chart from runtime, values from its repository), with the resources finalizer so a switch prunes the other side.
+- [x] **S01-02 Run each area's migrations with their own history table** · base
+  `ff-base-persistence`: a `MigrationArea` bean names an area; `AreaMigrations` runs one Flyway per area at startup, `db/migration/<area>` into `<area>_flyway_history`, in name order, with a baseline row when the area arrives in a database that already holds other areas' tables. Registered as a database initializer, so JPA and `JdbcTemplate` wait for it. `ff.migrations.enabled=false` turns it off (the chart does, in the pods).
+  Done when: `AreaMigrationsTest`: two areas in one database, one area alone and then both, an area in a non-empty database, the dependency of `JdbcTemplate` on the migrations.
+- [x] **S01-03 Add the application chassis** · base
+  `ff-base-app`, what every FF application has on both sides: shared defaults (health groups, probes, virtual threads, schema validation) from `META-INF/ff/app-defaults.yml`, which an application's own settings override; the `release` health group (`ff.release.healthy`); `/api/v1/me`; `FfApplication.run`, which turns the image into the migration Job under the `migrate` profile (no web server, exit when done).
+  Port: `release`, `caller`, `application-migrate.yml` and the application class of `ff-logistics-app`.
+  Done when: `ChassisTest`: probes and the release group, a release broken on purpose, the caller, defaults overridden, the migrate profile without a web server.
+- [x] **S01-04 Add the domain cores, empty** · shared
+  `shared/domain/ff-domain-{standards,warehousing,transportation,routing}` under `com.siose.ff.logistics.<area>`: a `package-info.java` naming the module and what it may use (only standards), an `<Area>Area` configuration declaring its `MigrationArea`, and a first script `V1__<area>_begins.sql` so either side can see the area was migrated. `standards` starts with `TransportMode`. The repository gets an aggregator, the Maven Wrapper and `build.sh`.
+  Done when: `./build.sh` installs the four jars.
+- [x] **S01-05 Add the modulith application** · modulith, runtime
+  `logistics-app`: the four cores and the chassis; `ModularityTest` finds the four areas as modules from shared's jars and verifies them. Its Dockerfile and its values (`deploy/apps/logistics-app`, with the edge label). The chart sets `FF_MIGRATIONS_ENABLED=false` in the pods, next to `SPRING_FLYWAY_ENABLED=false`.
+  Done when: the tests pass; the jar migrates three areas under `migrate` and exits 0, and as a pod answers `release: UP`, `401` without a token, and its build and commit on `/actuator/info`.
+- [x] **S01-06 Add the three services and their gateway** · services
+  `contexts/{warehousing,transportation,routing}` (ports 8082, 8083, 8084): one core each and the chassis; each test checks that the service holds and migrates only its own area. `gateway`: nginx-unprivileged with one route table, `/api/v1/wms/**`, `/api/v1/tms/**`, `/api/v1/geo/**` to their service and `/api/v1/me` to transportation, resolving the services per request so it starts before them. Values for all four; only the gateway carries the edge label.
+  Done when: the services' tests pass, and nginx with the same configuration routes each path, with its query and `Authorization`, to the right stand-in service.
+- [x] **S01-07 Add the edge Service** · runtime
+  The `edge` Application (`deploy/platform/edge`, a small Helm chart): one NodePort Service on 30081 (host 8081) selecting `ff-logistic/edge: "true"`, `targetPort: http`. The service chart gains `podLabels`.
+  Done when: `curl localhost:8081/actuator/health/readiness` answers from whichever side is running.
+- [x] **S01-08 Add the switch** · runtime
+  `deploy/implementation.yaml` (`active: modulith`) and the `ff-implementation` ApplicationSet: a matrix of two git generators, the switch file (with `pathParamPrefix`, as both would produce `path`) and `deploy/apps/*` in `ff-logistic-{{ .active }}`. Generated Applications are multi-source, labelled `ff-logistic/implementation`, with the resources finalizer.
   Done when: changing `active` to `services` and back, by commit, replaces the workloads and keeps the database untouched.
-- [ ] **S01-07 Run the same smoke test after every switch** · runtime
-  A PostSync Job of the switch Application calls the edge: health, an authenticated call with a token from the identity service, the release group. The same Job for both sides.
+- [x] **S01-09 Run the same smoke test after every switch** · runtime
+  The edge chart's PostSync Job signs in through the identity service and calls the edge: readiness, `/api/v1/me` without and with a token, and says which side answered (`/actuator/info` exists on the modulith only).
   Done when: the Job succeeds after a switch in each direction, and fails when the edge has nothing behind it.
-- [ ] **S01-08 Describe the switch** · docs
-  Architecture page: the switch, the edge, the label; a walkthrough page that starts each sprint's walkthrough from the edge.
+- [x] **S01-10 Describe the switch** · docs, runtime
+  The walkthrough page, the runtime page's switch section, and `tools/build-local-images.sh`, which builds and imports every image from the sibling folders until CI does (S2).
 
 ## S2 — CI, images and progressive delivery
 
@@ -171,7 +177,7 @@ Goal: the comparison becomes real. In the reference, the areas hardly talk to ea
 - [ ] **S04-02 Wire the flows in-process** · modulith
   Adapters as Spring beans and `@ApplicationModuleListener`s; the Modulith event registry.
 - [ ] **S04-03 Wire the flows over the network** · services
-  An HTTP client adapter with timeouts and fallback; Kafka for events through the Spring Modulith event registry as outbox; consumers that are idempotent and order by `occurredAt`; a dead-letter topic per consumer.
+  An HTTP client adapter with timeouts and fallback; Kafka for events through the Spring Modulith event registry as outbox; consumers that are idempotent and order by `occurredAt`; a dead-letter topic per consumer. Open question to settle first: the three services share one database, and the registry's `event_publication` table would be shared too; each service's resubmission must see only its own publications (a table or schema per service).
 - [ ] **S04-04 One shipment through both** · docs
   The walkthrough from booking to delivery, with a sequence diagram per side.
 - [ ] **S04-05 First failure drills** · docs

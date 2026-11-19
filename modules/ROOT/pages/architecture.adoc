@@ -173,7 +173,7 @@ sequenceDiagram
 [[switch]]
 == The switch
 
-`runtime/deploy/implementation.yaml` names the active side. An ApplicationSet reads that file and renders the Applications of that side only; the other side's Applications disappear and their workloads are pruned. Switching is one commit, reviewed like any other change.
+`runtime/deploy/implementation.yaml` names the active side. The `ff-implementation` ApplicationSet is a matrix of two git generators: the first reads that file, the second lists `deploy/apps/*` in the repository named after the answer. So the active side's Applications exist and the other side's do not; when the file changes, the ApplicationSet deletes the old ones, and their resources finalizer takes the workloads with them. Switching is one commit, reviewed like any other change.
 
 [mermaid]
 ....
@@ -199,6 +199,7 @@ Port 8081 is a Kubernetes Service named `edge` that selects pods by one label, `
 | `/api/v1/wms/**` | warehousing
 | `/api/v1/tms/**` | transportation
 | `/api/v1/geo/**` | routing
+| `/api/v1/me` | transportation (every service answers it the same way)
 |===
 
-The edge never changes when the implementation does. The walkthroughs, the smoke test, the load script and later the console all call the edge, and none of them knows which side answered.
+The edge never changes when the implementation does. The walkthroughs, the smoke test, the load script and later the console all call the edge, and none of them knows which side answered. The edge's own smoke test, run after every switch, signs in through the identity service and calls it the way a client would (xref:walkthrough.adoc[Walkthrough]).
