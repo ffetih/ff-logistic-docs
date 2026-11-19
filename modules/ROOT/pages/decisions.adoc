@@ -16,8 +16,9 @@ Considered:: One repository with folders: simpler to change, but it hides the bo
 
 Problem:: Written twice, the rules drift, and a measured difference may come from the drift instead of from the architecture.
 Decision:: Each area (standards, warehousing, transportation, routing) is a jar in `shared`. A core may depend on `standards` only; what it needs from another area is a port (an interface or an event). The modulith and the services provide the adapters.
-Costs:: The modulith's modules come from jars instead of source folders; whether Spring Modulith still verifies them is checked by a spike (S01-01) before anything depends on it. The services side gets a little more ceremony than a services-only design would have.
-Considered:: Two independent codebases: a cleaner story for each side, twice the rules. Cores inside the modulith repository: if the spike fails, this is the fallback.
+Costs:: The services side gets a little more ceremony than a services-only design would have.
+Checked:: A spike (S01-01, `spikes/modulith-modules-from-jars` in ff-logistic-docs) showed that Spring Modulith finds modules by package, wherever the class files are: a core in a jar is a module, its `package-info.java` is honoured, and an adapter placed in the modulith's jar under a core's package counts as part of that module. A call into another module's internals, a dependency not allowed, and a cycle each fail `verify()`. Two guards keep a core clean: Maven at compile time (a core depends on `standards` only) and Spring Modulith in the modulith's tests (adapters use other areas through their API only, and nothing forms a cycle).
+Considered:: Two independent codebases: a cleaner story for each side, twice the rules. Cores inside the modulith repository: the fallback, had the spike failed.
 
 [[d3]]
 == 3. One database, the same tables; each area owns its migrations

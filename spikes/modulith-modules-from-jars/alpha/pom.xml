@@ -1,0 +1,5 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"><modelVersion>4.0.0</modelVersion>
+  <parent><groupId>com.siose.ff</groupId><artifactId>spike</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+  <artifactId>spike-alpha</artifactId>
+  <dependencies><dependency><groupId>org.springframework.modulith</groupId><artifactId>spring-modulith-api</artifactId></dependency></dependencies>
+</project>

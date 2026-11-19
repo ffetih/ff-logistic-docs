@@ -96,9 +96,9 @@ Goal: the platform runs on the cluster, the libraries and the identity service b
 
 Goal: an empty application on each side, reached through the same edge, switched by one commit, checked by one smoke test. Images are still imported locally (S2 publishes them).
 
-- [ ] **S01-01 Prove that Spring Modulith checks modules that come from jars** · shared, modulith
-  A spike before the layout depends on it: two small modules in jars of their own, a modulith application that depends on both. `ApplicationModules.of(...).verify()` must see both modules and fail on a dependency the modules do not allow. If it cannot, the cores move into the modulith repository as source modules and the services depend on them from there; decision 2 is updated either way.
-  Done when: the spike's test fails on a forbidden dependency and passes without it; the result is written into decision 2.
+- [x] **S01-01 Prove that Spring Modulith checks modules that come from jars** · docs
+  A spike before the layout depends on it, kept in `spikes/modulith-modules-from-jars` with a `run.sh` that replays it: two modules in jars of their own, an application jar holding an adapter in one module's package. `ApplicationModules.of(...).verify()` finds both modules, counts the adapter as part of its module, and fails on a call into another module's internals, on a dependency the module does not allow, and on a cycle. Decision 2 holds; its record now says so.
+  Done when: `run.sh` prints OK for the clean case and the three violations.
 - [ ] **S01-02 Add the domain cores, empty** · shared
   `shared/domain/ff-domain-{standards,warehousing,transportation,routing}`: packages, a `package-info.java` naming each core's allowed dependencies (only standards), and each core's Flyway location `db/migration/<area>` with its own history table `<area>_flyway_history` (decision 3).
   Done when: `./build.sh` in shared installs the four jars.
