@@ -1,6 +1,6 @@
 # The hub component: the plan, the architecture and the decisions that span every repository.
 # It sits at the root because this repository is the docs. The code repositories keep theirs
-# under docs/ (S00-l); the playbook assembles them all.
+# under docs/; the playbook assembles them all.
 name: ff-logistic
 title: FF Logistic
 version: ~

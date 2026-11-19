@@ -79,18 +79,18 @@ Goal: the platform runs on the cluster, the libraries and the identity service b
 - [x] **S00-j Add the documentation hub** · docs
   README with the architecture diagrams, this backlog, the Antora playbook and the hub pages: overview, architecture, decisions.
   Done when: the repository shows the diagrams on GitHub and `./build.sh` builds the site.
-- [ ] **S00-k Manage Spring Modulith in the BOM again; restore build and Git info** · base
-  The Spring Modulith BOM goes back into `ff-base-bom`, so one version serves both sides: the modulith uses all of it, the services use only its event publication registry as their outbox (decision 6). `ff-base-parent` regains `spring-boot-maven-plugin:build-info` and `git-commit-id-maven-plugin` (with `failOnNoGitDirectory=false`), so `/actuator/info` names the build that is running, the first question after a switch.
+- [x] **S00-k Manage Spring Modulith in the BOM again; restore build and Git info** · base, shared
+  The Spring Modulith BOM goes back into `ff-base-bom`, so one version serves both sides: the modulith uses all of it, the services use only its event publication registry as their outbox (decision 6). `ff-base-parent` regains `spring-boot-maven-plugin:build-info` (without a build time, which would be the zip epoch) and `git-commit-id-maven-plugin` (with `failOnNoGitDirectory=false`) in its plugin management: applications list them without a version and `/actuator/info` names the build and commit that is running, the first question after a switch; libraries list neither. The identity service drops its own copy of the Git plugin's configuration. `build.sh` and `mvnw` become executable in Git.
   Done when: `./build.sh` installs the BOM with `spring-modulith-bom` managed, and an app built from the parent shows `build` and `git` in `/actuator/info`.
-- [ ] **S00-l Give every repository an Antora component** · runtime, base, shared, modulith, services, docs
-  `docs/antora.yml` and a nav in each repository; the playbook lists all six. The runtime Cluster Guide moves to `docs/modules/ROOT/pages/` and its PlantUML diagrams render through Kroki.
+- [x] **S00-l Give every repository an Antora component** · runtime, base, shared, modulith, services, docs
+  `docs/antora.yml`, a nav and a start page in each code repository; the hub's component sits at the root of ff-logistic-docs. The playbook reads the six repositories as sibling folders (`../runtime`, …), their working trees included, with edit links to GitHub. The runtime Cluster Guide moves to `docs/modules/ROOT/pages/`.
   Done when: one `./build.sh` in docs produces a site with a component per repository and working cross-references.
-- [ ] **S00-m Publish the site on GitHub Pages** · docs
-  A workflow builds the playbook on every push to `main` of the docs repository and deploys to Pages; the other repositories trigger it with a `repository_dispatch` after a docs change (from S2, when they have CI).
+- [x] **S00-m Publish the site on GitHub Pages** · docs
+  `.github/workflows/pages.yml` checks out the six repositories side by side, builds the playbook and deploys to Pages, on every push to `main` of the docs repository and by hand; the other repositories trigger it with a `repository_dispatch` of type `docs-changed` after a docs change (from S2, when they have CI). Once: Settings > Pages > Source: GitHub Actions.
   Done when: `https://ffetih.github.io/ff-logistic-docs/` shows the site.
-- [ ] **S00-n Keep each application's deploy values next to its code** · shared, runtime
+- [x] **S00-n Keep each application's deploy values next to its code** · shared, runtime
   `deploy/apps/identity` moves from runtime to shared; the `identity` Application becomes multi-source (the chart from runtime, `$values` from shared). One rule for every application from now on: runtime holds the chart and the Application; the values, including the image tag, live in the repository that builds the image. CI then never writes to another repository (S2).
-  Done when: `argocd app diff identity` is empty after the move.
+  Done when: `argocd app diff identity` is empty after the move. Merge shared before runtime: until shared has `deploy/apps/identity`, the new Application cannot render.
 
 ## S1 — Walking skeleton and the switch
 

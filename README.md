@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S0, foundation**. The platform runs on a local k3d cluster under Argo CD. The plan is in [backlog.md](backlog.md).
+> Status: **S0, foundation**. The platform runs on a local k3d cluster under Argo CD. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
 
 ---
 
@@ -135,7 +135,7 @@ flowchart BT
 
 ## Running it
 
-Everything runs on one local k3d cluster in WSL; nothing is applied by hand except the cluster and Argo CD itself. Start with the [Cluster Guide](https://github.com/ffetih/ff-logistic-runtime/blob/main/docs/src/cluster/cluster-guide.adoc) in `ff-logistic-runtime`.
+Everything runs on one local k3d cluster in WSL; nothing is applied by hand except the cluster and Argo CD itself. Start with the [Cluster Guide](https://github.com/ffetih/ff-logistic-runtime/blob/main/docs/modules/ROOT/pages/cluster-guide.adoc) in `ff-logistic-runtime`.
 
 ```bash
 k3d cluster create --config deploy/cluster/k3d-config.yaml     # in ff-logistic-runtime

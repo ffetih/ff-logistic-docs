@@ -3,3 +3,9 @@
 * xref:decisions.adoc[Decisions]
 * xref:plan.adoc[Plan]
 * xref:glossary.adoc[Glossary]
+* Repositories
+** xref:runtime::index.adoc[Runtime]
+** xref:base::index.adoc[Base libraries]
+** xref:shared::index.adoc[Shared]
+** xref:modulith::index.adoc[Modulith]
+** xref:services::index.adoc[Services]

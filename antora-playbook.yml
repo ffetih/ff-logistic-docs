@@ -1,4 +1,4 @@
-# The documentation site: this hub plus, from S00-l, one component per repository.
+# The documentation site: this hub and one component per repository.
 #
 #   ./build.sh            builds into build/site
 #
@@ -10,9 +10,33 @@ site:
   start_page: ff-logistic::index.adoc
 
 content:
+  # The six repositories side by side, as they are checked out locally (D:\dev\workspace\ff-logistic)
+  # and in the Pages workflow. HEAD is each folder's working tree: unsaved-to-Git changes show up
+  # in a local build. The edit links point at GitHub.
   sources:
     - url: .
       branches: HEAD
+      edit_url: 'https://github.com/ffetih/ff-logistic-docs/edit/main/{path}'
+    - url: ../runtime
+      branches: HEAD
+      start_path: docs
+      edit_url: 'https://github.com/ffetih/ff-logistic-runtime/edit/main/{path}'
+    - url: ../base
+      branches: HEAD
+      start_path: docs
+      edit_url: 'https://github.com/ffetih/ff-logistic-base/edit/main/{path}'
+    - url: ../shared
+      branches: HEAD
+      start_path: docs
+      edit_url: 'https://github.com/ffetih/ff-logistic-shared/edit/main/{path}'
+    - url: ../modulith
+      branches: HEAD
+      start_path: docs
+      edit_url: 'https://github.com/ffetih/ff-logistic-modulith/edit/main/{path}'
+    - url: ../services
+      branches: HEAD
+      start_path: docs
+      edit_url: 'https://github.com/ffetih/ff-logistic-services/edit/main/{path}'
 
 asciidoc:
   attributes:
