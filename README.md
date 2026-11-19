@@ -135,7 +135,7 @@ flowchart BT
 
 ## Running it
 
-Everything runs on one local k3d cluster in WSL; nothing is applied by hand except the cluster and Argo CD itself. Start with the [Cluster Guide](https://github.com/ffetih/ff-logistic-runtime/blob/main/docs/src/cluster/cluster-guide.adoc) in `ff-logistic-runtime`.
+Everything runs on one local k3d cluster in WSL; nothing is applied by hand except the cluster and Argo CD itself. Start with the [Cluster Guide](https://github.com/ffetih/ff-logistic-runtime/blob/main/docs/modules/ROOT/pages/cluster-guide.adoc) in `ff-logistic-runtime`.
 
 ```bash
 k3d cluster create --config deploy/cluster/k3d-config.yaml     # in ff-logistic-runtime
