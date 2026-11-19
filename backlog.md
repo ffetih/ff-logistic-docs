@@ -20,7 +20,7 @@ Roles: Claude implements and delivers each sprint as one branch per repository. 
 
 ## The three rules everything follows
 
-1. **runtime** is what we run but do not write. **shared** is what we write once. **modulith** and **services** are the same business wired two ways ([decisions](docs/modules/ROOT/pages/decisions.adoc)).
+1. **runtime** is what we run but do not write. **shared** is what we write once. **modulith** and **services** are the same business wired two ways ([decisions](modules/ROOT/pages/decisions.adoc)).
 2. **The business rules exist once**, in the domain cores. A core states what it needs from another area as a port; each implementation provides the adapters. The cores do not know which implementation runs them.
 3. **The outside is identical**: the same URLs on the edge (8081), the same tables in `ff_logistics`, the same Kafka topics and messages. Exactly one implementation is active; one commit switches.
 
