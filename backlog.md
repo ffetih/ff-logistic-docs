@@ -79,8 +79,8 @@ Goal: the platform runs on the cluster, the libraries and the identity service b
 - [x] **S00-j Add the documentation hub** · docs
   README with the architecture diagrams, this backlog, the Antora playbook and the hub pages: overview, architecture, decisions.
   Done when: the repository shows the diagrams on GitHub and `./build.sh` builds the site.
-- [ ] **S00-k Manage Spring Modulith in the BOM again; restore build and Git info** · base
-  The Spring Modulith BOM goes back into `ff-base-bom`, so one version serves both sides: the modulith uses all of it, the services use only its event publication registry as their outbox (decision 6). `ff-base-parent` regains `spring-boot-maven-plugin:build-info` and `git-commit-id-maven-plugin` (with `failOnNoGitDirectory=false`), so `/actuator/info` names the build that is running, the first question after a switch.
+- [x] **S00-k Manage Spring Modulith in the BOM again; restore build and Git info** · base, shared
+  The Spring Modulith BOM goes back into `ff-base-bom`, so one version serves both sides: the modulith uses all of it, the services use only its event publication registry as their outbox (decision 6). `ff-base-parent` regains `spring-boot-maven-plugin:build-info` (without a build time, which would be the zip epoch) and `git-commit-id-maven-plugin` (with `failOnNoGitDirectory=false`) in its plugin management: applications list them without a version and `/actuator/info` names the build and commit that is running, the first question after a switch; libraries list neither. The identity service drops its own copy of the Git plugin's configuration. `build.sh` and `mvnw` become executable in Git.
   Done when: `./build.sh` installs the BOM with `spring-modulith-bom` managed, and an app built from the parent shows `build` and `git` in `/actuator/info`.
 - [ ] **S00-l Give every repository an Antora component** · runtime, base, shared, modulith, services, docs
   `docs/antora.yml` and a nav in each repository; the playbook lists all six. The runtime Cluster Guide moves to `docs/modules/ROOT/pages/` and its PlantUML diagrams render through Kroki.
