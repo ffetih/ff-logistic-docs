@@ -1,0 +1,8 @@
+# The hub component: the plan, the architecture and the decisions that span every repository.
+# Each of the other repositories brings its own component (S00-l); the playbook assembles them.
+name: ff-logistic
+title: FF Logistic
+version: ~
+start_page: index.adoc
+nav:
+  - modules/ROOT/nav.adoc

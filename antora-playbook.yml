@@ -1,0 +1,32 @@
+# The documentation site: this hub plus, from S00-l, one component per repository.
+#
+#   ./build.sh            builds into build/site
+#
+# Diagrams (Mermaid here, PlantUML in the components) are rendered by Kroki: the pages link
+# to the image on the Kroki server, so the build needs no network, and a reader does.
+site:
+  title: FF Logistic
+  url: https://ffetih.github.io/ff-logistic-docs
+  start_page: ff-logistic::index.adoc
+
+content:
+  sources:
+    - url: .
+      branches: HEAD
+      start_path: docs
+
+asciidoc:
+  attributes:
+    kroki-server-url: https://kroki.io
+    experimental: ''
+    page-pagination: ''
+  extensions:
+    - asciidoctor-kroki
+
+ui:
+  bundle:
+    url: https://gitlab.com/antora/antora-ui-default/-/jobs/artifacts/HEAD/raw/build/ui-bundle.zip?job=bundle-stable
+    snapshot: true
+
+output:
+  dir: ./build/site

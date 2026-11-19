@@ -1,0 +1,31 @@
+= Plan
+:description: The sprints of FF Logistic and where the work stands.
+:url-backlog: https://github.com/ffetih/ff-logistic-docs/blob/main/backlog.md
+
+The work goes in sprints. Each sprint is one pull request in every repository it touches and ends with something running on the cluster; each backlog item is one commit. The item-level plan, with what proves each item done, is the {url-backlog}[backlog].
+
+[cols="2,2,4",options="header"]
+|===
+| Sprint | Repositories | Ends with
+
+| S0 Foundation | all | The platform runs; the base libraries and the identity service build; this hub and its site exist
+| S1 Walking skeleton and the switch | shared, modulith, services, runtime | An empty app on each side behind the edge; one commit switches; the same smoke test passes on both
+| S2 CI, images and progressive delivery | all | Every repository builds in CI; images on GHCR; canary releases on both sides
+| S3 Standards and warehousing | shared, modulith, services | The first area runs on both sides from one core
+| S4 Transportation and the flows between areas | shared, modulith, services | One shipment crosses three areas, in-process on one side, over REST and Kafka on the other
+| S5 Routing and documents | shared, modulith, services | Route planning, e-CMR and e-POD on both sides
+| S6 Events out and analytics | shared, modulith, services | Deliveries reach the analytics database from either side
+| S7 The comparison | docs, runtime | Memory, startup, latency, failures and the cost of a change, measured on both sides
+| S8–S13 | shared, runtime | Reporting and Superset, console, partner gateways, tracing, multi-cluster: built once, against the edge
+|===
+
+[mermaid]
+....
+flowchart LR
+  S0[S0 foundation] --> S1[S1 skeleton + switch] --> S2[S2 CI + canary]
+  S2 --> S3[S3 warehousing] --> S4[S4 transportation + flows] --> S5[S5 routing] --> S6[S6 analytics]
+  S6 --> S7[S7 the comparison]
+  S7 --> S8[S8–S13 built once]
+....
+
+S1 to S6 port the business from the earlier single-repository version (its sprints S1–S8); what is new is the ports, the services side and the comparison.

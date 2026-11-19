@@ -1,0 +1,13 @@
+{
+  "name": "ff-logistic-docs",
+  "private": true,
+  "description": "The FF Logistic documentation site, built with Antora",
+  "scripts": {
+    "build": "antora antora-playbook.yml"
+  },
+  "devDependencies": {
+    "@antora/cli": "3.2.3",
+    "@antora/site-generator": "3.2.3",
+    "asciidoctor-kroki": "0.18.1"
+  }
+}

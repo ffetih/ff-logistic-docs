@@ -1,0 +1,33 @@
+= FF Logistic
+:description: One logistics product, built as a modular monolith and as microservices, on one platform, and compared.
+
+One logistics product, built twice: as a *modular monolith* and as *microservices*, on the same platform, behind the same switch, and then measured.
+
+== The question
+
+"Should this be a monolith or microservices?" is usually answered by comparing a real system with an imagined one. Here both are real. The business rules are written once; only the wiring between the business areas differs. Both run against the same database tables, the same Kafka topics and the same identity service, and one Git commit decides which of them is running.
+
+Think of one recipe book and two kitchens. In the first kitchen, every cook stands at the same counter: passing a dish is handing it over. In the second, each cook has a room of their own, and dishes go through hatches, with a ticket, sometimes late. The recipes are identical. What differs, and what this project measures, is everything about the hatches.
+
+[mermaid]
+....
+flowchart LR
+  subgraph once ["written once"]
+    R["the business rules<br/>warehousing · transportation · routing"]
+  end
+  R --> M["modulith<br/>one process<br/>method calls, in-process events,<br/>one transaction"]
+  R --> S["services<br/>four processes<br/>HTTP, Kafka through an outbox,<br/>eventual consistency"]
+  M & S --> O(["the same outside:<br/>URLs · tables · topics · tokens"])
+....
+
+== Where to go next
+
+[cols="1,3"]
+|===
+| xref:architecture.adoc[Architecture] | The layers, the repositories, one core with two wirings, the switch, a delivery on each side
+| xref:decisions.adoc[Decisions] | Why it is built this way, and what each choice costs
+| xref:plan.adoc[Plan] | The sprints, and where the work stands
+| xref:glossary.adoc[Glossary] | The terms used throughout
+|===
+
+The code is in six repositories under https://github.com/ffetih[github.com/ffetih], all named `ff-logistic-*`.

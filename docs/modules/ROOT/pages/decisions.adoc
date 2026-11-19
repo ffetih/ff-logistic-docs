@@ -1,0 +1,79 @@
+= Decisions
+:description: Why FF Logistic is built the way it is, and what each choice costs.
+
+Each decision records the problem, the choice, what it costs, and what else was considered. A decision is changed by writing what replaced it, not by deleting it.
+
+[[d1]]
+== 1. Three layers: runtime, shared, implementations
+
+Problem:: Two implementations of one product invite two copies of everything around it: two identity services, two analytics pipelines, two clusters. The comparison would then measure the copies.
+Decision:: *runtime* is what we run but do not write. *shared* is what we write once and that does not care which implementation runs. *modulith* and *services* hold only what is genuinely different.
+Costs:: Six repositories. A change that crosses layers (a new event field) is several pull requests.
+Considered:: One repository with folders: simpler to change, but it hides the boundaries that the comparison is about, and every build builds everything.
+
+[[d2]]
+== 2. The business rules exist once, as domain cores with ports
+
+Problem:: Written twice, the rules drift, and a measured difference may come from the drift instead of from the architecture.
+Decision:: Each area (standards, warehousing, transportation, routing) is a jar in `shared`. A core may depend on `standards` only; what it needs from another area is a port (an interface or an event). The modulith and the services provide the adapters.
+Costs:: The modulith's modules come from jars instead of source folders; whether Spring Modulith still verifies them is checked by a spike (S01-01) before anything depends on it. The services side gets a little more ceremony than a services-only design would have.
+Considered:: Two independent codebases: a cleaner story for each side, twice the rules. Cores inside the modulith repository: if the spike fails, this is the fallback.
+
+[[d3]]
+== 3. One database, the same tables; each area owns its migrations
+
+Problem:: With separate databases per implementation, a switch would start from empty data, and the two sides could never be checked against the same rows.
+Decision:: Both sides use `ff_logistics` and the same tables. Each area keeps its migrations under `db/migration/<area>` with its own Flyway history table, `<area>_flyway_history`. The modulith runs four migrations, one per area; each service runs its own.
+Costs:: Both sides must agree on the schema exactly, by construction (the migrations are in the cores). The services side does not get a database per service, the textbook setup; here the areas are separated by table ownership instead. Database roles per area can enforce that later.
+Considered:: A schema per area: closer to database-per-service, and possible later without changing the cores' code.
+
+[[d4]]
+== 4. Exactly one implementation is active; the switch is a commit
+
+Problem:: Running both at once doubles the events on the shared topics and the writers on the shared tables.
+Decision:: `runtime/deploy/implementation.yaml` names the active side; an ApplicationSet renders only that side's Applications and prunes the other.
+Costs:: Side-by-side latency comparisons need two runs, not one.
+Considered:: Both sides at once with separate databases and topic prefixes: rejected with decision 3.
+
+[[d5]]
+== 5. One edge, selected by a label
+
+Problem:: Clients must not care which side answers.
+Decision:: The Service `edge` (port 8081) selects `ff-logistic/edge: "true"`. The modulith's pods carry the label; on the services side only the gateway's pods do, and the gateway routes by path prefix.
+Costs:: One more hop on the services side, which is real and is measured.
+Considered:: Spring Cloud Gateway instead of nginx: more features than a path table needs.
+
+[[d6]]
+== 6. One outbox for both: the Spring Modulith event registry
+
+Problem:: A service that commits to its database and then sends to Kafka can lose the event between the two (the dual-write problem).
+Decision:: Both sides record events in the Spring Modulith event publication registry, in the same transaction as the change, and externalize them to Kafka after commit. The services use only the registry and the Kafka externalization, not the module model.
+Costs:: Consumers see each event at least once and must be idempotent; across keys the order is not guaranteed, so consumers order by `occurredAt`.
+Considered:: Debezium change data capture: another moving part for the same guarantee.
+
+[[d7]]
+== 7. The flows between areas are designed in
+
+Problem:: In the earlier version, the areas hardly talked to each other; with no flows between them, both implementations would behave the same.
+Decision:: Three flows, a query and two events (xref:architecture.adoc#flows[Architecture]), each through a port.
+Costs:: Business logic that the earlier version did not have.
+
+[[d8]]
+== 8. Deploy values live next to the code
+
+Problem:: If CI in `shared` builds an image whose tag lives in `runtime`, CI must write to another repository, which the built-in GitHub token cannot do.
+Decision:: Runtime holds the chart and the Argo CD Applications; the values, the image tag included, live in the repository that builds the image. The Applications are multi-source.
+Costs:: An Application's definition and its values are in two places.
+
+[[d9]]
+== 9. The documentation: a hub, and a component per repository
+
+Problem:: Docs in one central repository drift away from the code they describe; docs spread over six repositories have no front page.
+Decision:: A doc lives where the change that makes it wrong happens. What spans repositories (plan, architecture, decisions, comparison) lives in `ff-logistic-docs`; the rest lives with its code. Antora assembles one site from all six.
+Costs:: Diagrams render through Kroki, since Antora runs Asciidoctor.js, which cannot run PlantUML locally.
+
+[[d10]]
+== 10. Mermaid in the hub
+
+Problem:: The hub is read on GitHub as much as on the site.
+Decision:: The hub's diagrams are Mermaid, which GitHub renders in Markdown and Kroki renders in the site. The components may keep PlantUML, also through Kroki.

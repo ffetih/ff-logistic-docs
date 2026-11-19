@@ -1,0 +1,204 @@
+= Architecture
+:description: The layers, the repositories, one core with two wirings, the switch and the edge.
+
+[[layers]]
+== Three layers
+
+Every part of the system sits in one of three layers, by a simple rule:
+
+[cols="1,2,3",options="header"]
+|===
+| Layer | Rule | Contents
+
+| *runtime* | What we run but do not write | k3d cluster, Argo CD, Argo Rollouts, PostgreSQL, Keycloak, Kafka, RustFS, Superset, the service Helm chart, the switch
+| *shared* | What we write once; it does not care which implementation runs | The identity service, the analytics loader, the domain cores, the event contract
+| *implementations* | The same business, wired two ways; exactly one is active | *modulith*: one Spring Modulith application. *services*: three Spring Boot services and a gateway.
+|===
+
+[mermaid]
+....
+flowchart TB
+  EDGE(["edge :8081 · same URLs either way"])
+  subgraph impl ["implementations: exactly one is active"]
+    direction LR
+    subgraph mod ["modulith"]
+      APP["logistics-app<br/>one process"]
+    end
+    subgraph svc ["services"]
+      GW[gateway] --> WH[warehousing] & TR[transportation] & RO[routing]
+    end
+  end
+  subgraph sh ["shared: written once"]
+    direction LR
+    DOM["domain cores<br/>standards · warehousing ·<br/>transportation · routing"]
+    ID["identity<br/>Keycloak facade + JWKS"]
+    AL[analytics-loader]
+  end
+  subgraph rt ["runtime: what we run"]
+    direction LR
+    KC[Keycloak]
+    PG[("PostgreSQL")]
+    KF[Kafka]
+    RF["RustFS (S3)"]
+    SU[Superset]
+  end
+
+  EDGE --> impl
+  DOM -. "same jars" .-> impl
+  impl -->|verify tokens| ID
+  ID --> KC
+  impl -->|same tables| PG
+  impl -->|same topics| KF
+  impl -->|documents| RF
+  KF --> AL -->|analytics database| PG
+  PG -->|"one tenant per reader (RLS)"| SU
+....
+
+Whichever implementation is active reaches the platform the same way. Three things are true for both:
+
+* *Only the identity service calls Keycloak.* The applications verify each token themselves, against the identity service's published keys (JWKS). Nothing on the request path waits for Keycloak.
+* *Kafka does not feed Superset directly.* The analytics loader stores each delivery in its own database, which Superset reads as `analytics_reader`, one tenant at a time (row-level security).
+* *Documents never pass through the applications.* They hand out presigned, write-once links; the browser or the driver's device talks to RustFS directly.
+
+[[repositories]]
+== Repositories
+
+[cols="1,3",options="header"]
+|===
+| Repository | Holds
+
+| https://github.com/ffetih/ff-logistic-docs[ff-logistic-docs] | This hub: plan, architecture, decisions, comparison; assembles the site
+| https://github.com/ffetih/ff-logistic-runtime[ff-logistic-runtime] | The cluster, Argo CD (app of apps), the platform, the Helm chart, the edge, the switch
+| https://github.com/ffetih/ff-logistic-base[ff-logistic-base] | Technical libraries: BOM, parent POM, tenant, web, security, persistence, storage
+| https://github.com/ffetih/ff-logistic-shared[ff-logistic-shared] | Identity service, analytics loader, domain cores, event contract
+| https://github.com/ffetih/ff-logistic-modulith[ff-logistic-modulith] | The modular monolith
+| https://github.com/ffetih/ff-logistic-services[ff-logistic-services] | The three services and the gateway
+|===
+
+The build order follows the arrows: a repository builds on what it points to.
+
+[mermaid]
+....
+flowchart BT
+  base[base] --> shared[shared]
+  base --> modulith[modulith]
+  base --> services[services]
+  shared -->|domain jars| modulith
+  shared -->|domain jars| services
+  runtime[runtime] -. deploys .-> shared & modulith & services
+  docs[docs] -. assembles the site from .-> runtime & base & shared & modulith & services
+....
+
+[[ports]]
+== One core, two wirings
+
+Each business area is a library, a _domain core_: its entities, rules, REST API and Flyway migrations. A core depends on `standards` and on nothing else of the business. When it needs another area, it declares a *port*: an interface for a question it asks (`DistanceLookup`), or an event it publishes (`ShipmentDelivered`). The two implementations differ only in the *adapters* that fulfil the ports.
+
+[mermaid]
+....
+flowchart LR
+  subgraph core ["transportation core: one jar, used by both"]
+    API[ShipmentController] --> S[ShipmentService]
+    S --> P{{"port<br/>DistanceLookup"}}
+    S --> E{{"port<br/>events out"}}
+  end
+  subgraph m ["modulith adapters"]
+    M1["calls routing's service<br/>in the same process"]
+    N1["Spring Modulith event,<br/>listeners in the same JVM"]
+  end
+  subgraph s ["services adapters"]
+    M2["HTTP to routing,<br/>timeout + haversine fallback"]
+    N2["outbox row in the same<br/>transaction, then Kafka"]
+  end
+  P --> M1
+  P --> M2
+  E --> N1
+  E --> N2
+....
+
+This is the classic ports-and-adapters (hexagonal) shape, used here for one specific reason: it isolates exactly the part that differs. A bug in a business rule is fixed once, for both sides. A difference in the measurements can only come from the wiring.
+
+[[flows]]
+== The flows between areas
+
+In the earlier single-repository version, the business areas hardly talked to each other. Without flows between them there is nothing to compare, so three are part of the design:
+
+[cols="3,1,2,2",options="header"]
+|===
+| Flow | Kind | Modulith | Services
+
+| Transportation asks routing for a leg's road distance | query | method call | HTTP, timeout, haversine fallback
+| A shipment delivered to a warehouse opens its receiving at warehousing | event | Modulith event | Kafka through the outbox
+| A completed route stop with proof of delivery delivers the shipment | event | Modulith event | Kafka through the outbox
+|===
+
+The second flow, on each side:
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant D as Driver app
+  box modulith: one process, one database transaction
+    participant T as transportation
+    participant W as warehousing
+  end
+  D->>T: POST /api/v1/tms/shipments/{id}/delivery
+  T->>T: shipment DELIVERED
+  T-->>W: ShipmentDelivered (in-process event)
+  W->>W: receiving opened
+  T-->>D: 200 OK
+  Note over T,W: The event is stored in the registry with the shipment.<br/>A failed listener is retried, and the delivery itself is never lost.
+....
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant D as Driver app
+  participant G as gateway
+  participant T as transportation
+  participant K as Kafka
+  participant W as warehousing
+  D->>G: POST /api/v1/tms/shipments/{id}/delivery
+  G->>T: forward
+  T->>T: shipment DELIVERED + outbox row (one transaction)
+  T-->>D: 200 OK
+  T->>K: ShipmentDelivered (after commit)
+  K->>W: ShipmentDelivered
+  W->>W: receiving opened (its own transaction, idempotent)
+  Note over T,W: Between steps 3 and 7 the two areas disagree.<br/>That window is what eventual consistency means.
+....
+
+[[switch]]
+== The switch
+
+`runtime/deploy/implementation.yaml` names the active side. An ApplicationSet reads that file and renders the Applications of that side only; the other side's Applications disappear and their workloads are pruned. Switching is one commit, reviewed like any other change.
+
+[mermaid]
+....
+flowchart LR
+  C["commit<br/>implementation.yaml<br/>active: services"] --> AS[Argo CD ApplicationSet]
+  AS -->|renders| S1[warehousing] & S2[transportation] & S3[routing] & G[gateway]
+  AS -.->|prunes| M[logistics-app]
+  G & S1 & S2 & S3 --> DB[("the same tables:<br/>the data stays")]
+  G --> SM[smoke test<br/>against the edge]
+....
+
+Both sides use the same tables, so the data survives a switch. Each area owns its migrations and its own Flyway history table (`warehousing_flyway_history`, …), whichever process applies them. The same smoke test runs after every switch, against the same URLs.
+
+[[edge]]
+== The edge
+
+Port 8081 is a Kubernetes Service named `edge` that selects pods by one label, `ff-logistic/edge: "true"`. On the modulith side, the application's pods carry it. On the services side, only the gateway's pods do, and the gateway routes by path:
+
+[cols="2,2",options="header"]
+|===
+| Path | Services side
+
+| `/api/v1/wms/**` | warehousing
+| `/api/v1/tms/**` | transportation
+| `/api/v1/geo/**` | routing
+|===
+
+The edge never changes when the implementation does. The walkthroughs, the smoke test, the load script and later the console all call the edge, and none of them knows which side answered.

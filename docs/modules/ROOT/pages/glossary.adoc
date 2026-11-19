@@ -1,0 +1,20 @@
+= Glossary
+:description: The terms used throughout FF Logistic.
+
+[glossary]
+Adapter:: The implementation of a port for one side: a method call or a Modulith event in the modulith, an HTTP client or a Kafka producer on the services side.
+Analysis (canary):: A check Argo Rollouts runs while a new version takes a share of the traffic; when it fails, the release is rolled back.
+Area:: A business area: standards, warehousing, transportation or routing.
+ASN:: Advance shipping notice: the goods a warehouse should expect.
+Domain core:: The jar holding one area's entities, rules, REST API and migrations; the same jar runs in both implementations.
+Edge:: The Service on port 8081 that every client calls; it reaches whichever implementation is active.
+e-CMR:: The electronic consignment note of a road shipment.
+e-POD:: Electronic proof of delivery: the signature taken at a route stop.
+Eventual consistency:: Two areas that agree only after an event has travelled from one to the other; in between, they may disagree.
+Idempotent:: Doing something twice has the same effect as doing it once. A consumer that may receive an event twice must be.
+Modular monolith:: One deployable application whose code is divided into modules with enforced boundaries; here, Spring Modulith.
+Outbox:: A table written in the same transaction as the change it reports, from which events are sent afterwards, so a change is never committed without its event. Here, the Spring Modulith event publication registry.
+Port:: An interface through which a core asks another area something, or tells it something, without knowing how the answer arrives.
+Row-level security (RLS):: A PostgreSQL rule that filters every row a session may see; here, by tenant.
+Switch:: The commit to `runtime/deploy/implementation.yaml` that decides which implementation runs.
+Tenant:: One customer company; every row and every token carries its tenant.
