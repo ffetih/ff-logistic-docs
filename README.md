@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S0, foundation**. The platform runs on a local k3d cluster under Argo CD. The plan is in [backlog.md](backlog.md).
+> Status: **S0, foundation**. The platform runs on a local k3d cluster under Argo CD. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
 
 ---
 
