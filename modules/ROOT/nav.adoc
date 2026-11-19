@@ -2,6 +2,7 @@
 * xref:architecture.adoc[Architecture]
 * xref:decisions.adoc[Decisions]
 * xref:plan.adoc[Plan]
+* xref:walkthrough.adoc[Walkthrough]
 * xref:glossary.adoc[Glossary]
 * Repositories
 ** xref:runtime::index.adoc[Runtime]

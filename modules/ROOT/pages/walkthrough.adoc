@@ -1,0 +1,80 @@
+= Walkthrough
+:description: Run FF Logistic on either side, and switch between them.
+
+Every walkthrough starts from the edge, `http://localhost:8081`: the same URLs whichever implementation is active. Each sprint adds its part here.
+
+[[s1]]
+== S1: the skeleton on both sides
+
+What exists: four domain cores with no business yet, one application on each side, the edge, the switch. What it shows: the same request answered by one process or by four, and the database shared between them.
+
+=== Build and import the images
+
+Until CI publishes them (S2), the images are built from the six repositories side by side and imported into the cluster:
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic
+docs/tools/build-local-images.sh          # base, shared, identity, modulith, services, gateway
+----
+
+=== Start on the modulith
+
+`deploy/implementation.yaml` in ff-logistic-runtime says `active: modulith`. After the merge, `ff-root` creates the `edge` and `ff-implementation` Applications; the ApplicationSet creates `logistics-app`.
+
+[source,bash]
+----
+argocd app sync edge
+argocd app sync logistics-app          # PreSync: migrate the three areas; PostSync: its smoke test
+argocd app sync edge                   # the edge's smoke test, now with the modulith behind it
+----
+
+[source,bash]
+----
+curl -s localhost:8081/actuator/info     # the modulith's build and commit
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions \
+  | sed -n 's/.*"accessToken" *: *"\([^"]*\)".*/\1/p')
+curl -s -H "Authorization: Bearer $TOKEN" localhost:8081/api/v1/me
+----
+
+=== Switch to the services
+
+[source,bash]
+----
+cd runtime
+sed -i 's/^active: .*/active: services/' deploy/implementation.yaml
+git commit -am "Switch to the services" && git push
+# within a minute: logistics-app is gone, warehousing, transportation, routing and gateway exist
+argocd app sync -l ff-logistic/implementation=services
+argocd app sync edge
+----
+
+The same calls give the same answers; `/actuator/info` now returns 404, because the gateway has no such endpoint, which is how the smoke test tells the two sides apart.
+
+[mermaid]
+....
+sequenceDiagram
+  participant C as curl
+  participant E as edge :8081
+  participant G as gateway
+  participant T as transportation
+  C->>E: GET /api/v1/me (Bearer)
+  E->>G: the only pod with the edge label
+  G->>T: /api/v1/me goes to transportation
+  T-->>C: {"tenantId":"ff-eu-freight", ...}
+....
+
+=== What the database says
+
+Each area's history table is shared by both sides: the services found every script already applied by the modulith, and the modulith will find the same when it comes back.
+
+[source,bash]
+----
+kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c \
+  "select 'warehousing' area, version, description, installed_on from warehousing_flyway_history
+   union all select 'transportation', version, description, installed_on from transportation_flyway_history
+   union all select 'routing', version, description, installed_on from routing_flyway_history order by 1"
+----
+
+Switch back to `active: modulith` the same way; nothing is migrated twice.
