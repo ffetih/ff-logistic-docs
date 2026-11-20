@@ -6,6 +6,7 @@
 ** xref:try-shipment.adoc[Try it: a shipment to a warehouse]
 ** xref:try-failures.adoc[Try it: failure drills]
 ** xref:try-route.adoc[Try it: a route]
+** xref:try-flows.adoc[Try it: routing talks to transportation]
 ** xref:switching.adoc[Switching sides: what happens]
 
 .Reference

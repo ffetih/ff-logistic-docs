@@ -129,7 +129,7 @@ In the earlier single-repository version, the business areas hardly talked to ea
 
 | A shipment delivered to a warehouse opens an inbound arrival there | event | Modulith event, through the outbox | Kafka, through the outbox | S4
 | Transportation asks routing for a leg's road distance | query | method call | HTTP, timeout, haversine fallback | S5
-| A completed route stop with proof of delivery delivers the shipment | event | Modulith event | Kafka through the outbox | S5
+| A completed route stop delivers the shipment it carried | event | Modulith event, through the outbox | Kafka, through the outbox | S5
 |===
 
 Each flow goes through ports (xref:decisions.adoc#d2[decision 2]): the cores do not know each other. Transportation publishes `ShipmentDelivered`, in its own words; warehousing offers `InboundArrivals.open(ShipmentArrival)`, in its own. The *wiring* that translates one into the other is the only part written twice, and it is small: a listener in the modulith's `flows` module, a Kafka consumer in the warehousing service.
@@ -252,6 +252,42 @@ The question is asked before any transaction starts, so no database connection w
 |===
 
 With the straight-line road matrix (the cluster's default), routing's answer and the estimate are the same number: the difference shows only in `distanceSource`. With OSRM configured, `ROUTING` would be the real road network.
+
+[[flow-3]]
+=== Flow 3, on each side
+
+An event again, in the other direction: the driver completes a stop, someone signs for the goods, and the shipment the stop carried is delivered. A stop names its shipment by number (`shipmentNumber`, optional). Routing publishes `RouteStopCompleted`; transportation offers `ShipmentDeliveries.deliver(StopDelivery)`. The delivery is the same as one made through the API, so it publishes `ShipmentDelivered`, and flow 2 follows when the shipment went to a warehouse: one completed stop can move three areas.
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant D as dispatcher
+  participant R as routing
+  participant O as outbox
+  participant T as transportation
+  participant W as warehousing
+  D->>R: POST /api/v1/geo/routes/{id}/stops/IST-ESN/completion
+  R->>R: stop COMPLETED
+  R->>O: RouteStopCompleted (same transaction)
+  R-->>D: 200 OK
+  O->>T: after the commit: ShipmentDeliveries.deliver (method call, or Kafka)
+  T->>T: shipment DELIVERED; ShipmentDelivered to the outbox
+  T-->>W: flow 2, if the destination is a warehouse: arrival OPEN
+....
+
+[cols="2,3,3",options="header"]
+|===
+| | Modulith | Services
+
+| Between the two areas | `flows.StopsToShipments`, on another thread | topic `ff.logistics.geo.route-stop-completed`, keyed by the route plan; consumer group `transportation`
+| The outbox | `modulith.event_publication` | the routing service's own, in the schema `routing` (new in S5)
+| Read twice | possible (a retried row): delivered once, `ALREADY_DELIVERED` | possible (a re-read message): delivered once
+| Cannot be read | not possible: the event is a Java object | straight to `….transportation.dlt`, with its bytes, and the consumer goes on
+| Unknown shipment | `UNKNOWN_SHIPMENT`, logged; the stop stays completed | the same
+|===
+
+Two consumers, two styles. The warehousing service reads its messages as Strings and parses them itself. The transportation service also *sends* events, so it has Spring Modulith's Kafka support, which sets its consumer to bytes and adds a JSON message converter to every `@KafkaListener`: the listener takes the message type (`RouteStopCompletedMessage`) and the converter fills it. A listener there that asks for a `String` gets nothing: every record fails conversion, which counts as fatal, and goes to the dead-letter topic unread. That is what the first test run showed, before the cluster ever did.
 
 [[switch]]
 == The switch
