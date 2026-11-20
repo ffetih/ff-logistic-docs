@@ -242,14 +242,15 @@ That works for `run`, `workflow` and `pr merge`; `pr create --fill` still needs 
 
 A sprint that touches several repositories is merged in the order its dependencies build (xref:#order[below]). A pull request's CI clones the libraries it builds on from their `main` (xref:decisions.adoc#d11[decision 11]): shared's checks are only green once base's change is *merged*. So each repository waits for the one before it.
 
-The helper does the loop above for one repository, and returns only when its merge has been built on `main`:
+The helper does the loop above for one repository, on the branch checked out there, and returns only when its merge has been built on `main`:
 
 [source,bash]
 ----
 ship() {
-  git push -q -u origin sprint/s05 && gh pr create --base main --head sprint/s05 --fill \
+  local b; b=$(git branch --show-current)
+  git push -q -u origin "$b" && gh pr create --base main --head "$b" --fill \
   && sleep 10 && gh pr checks --watch && gh pr merge --merge || return 1
-  sha=$(gh pr view sprint/s05 --json mergeCommit -q .mergeCommit.oid)
+  sha=$(gh pr view "$b" --json mergeCommit -q .mergeCommit.oid)
   echo "waiting for main's run of ${sha:0:7} ..."
   for i in $(seq 1 30); do
     id=$(gh run list --commit "$sha" --limit 1 --json databaseId -q '.[0].databaseId')
@@ -271,7 +272,9 @@ cd /mnt/d/dev/workspace/ff-logistic
 
 Why the run of the *merge commit*, and not simply the latest run on `main`: right after a merge, GitHub has not created the new run yet (xref:#a-moment[a run needs a moment]). "The latest run" is then the previous one, already finished; the helper would return at once, and shared would start before base is on `main`. `gh run list --commit` waits for the run that belongs to this merge.
 
-Shipped this way first in S5. The next step would move the chain into GitHub itself: a workflow that ships a sprint branch through all repositories in order (a release train), and PR builds that clone a library's branch of the same name when it exists, so a sprint's pull requests can all go green at once.
+Shipped this way first in S5.
+
+Since S05-07, a pull request's build clones each library at the branch of the same name when the library has one, and at `main` otherwise. A sprint's branches, `sprint/s05-flows` in shared, modulith and services, build against each other: their pull requests can be opened together and go green together. The merges still follow the build order, because a build on `main` clones `main`. The next step would move the chain into GitHub itself: a workflow that ships a sprint branch through all repositories in order (a release train, S07-06).
 
 [[site]]
 == The documentation site: a fourth station
