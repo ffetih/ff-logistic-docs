@@ -166,15 +166,18 @@ Goal: no image built by hand. Every repository builds and tests in CI, publishes
 
 Goal: the first business area on both sides from one core. The walkthrough's warehouse part runs on either.
 
-- [ ] **S03-01 Port the standards** · shared
+- [x] **S03-01 Port the standards** · shared
   `ff-domain-standards`: GS1 (SSCC, GLN check digits), ISO 6346 container codes, transport modes, the EN 16258 / ISO 14083 emissions calculator, `GeoDistance`.
   Port: `…/logistics/standards`.
-- [ ] **S03-02 Port the warehousing core** · shared
+- [x] **S03-02 Port the warehousing core** · shared
   Warehouses, bins, ASNs, receiving and palletizing; its REST API under `/api/v1/wms`; its migrations in `db/migration/warehousing` with history `warehousing_flyway_history`.
   Port: `…/logistics/wms`, `V*__wms_*.sql`.
-- [ ] **S03-03 Run warehousing in the modulith** · modulith
-- [ ] **S03-04 Run warehousing as a service** · services
-- [ ] **S03-05 One walkthrough, two implementations** · docs
+  The package is the area's name (`…logistics.warehousing`); the tables and the URL keep the industry's `wms`. The scripts are V2 and V3 after S1's V1, with `TIMESTAMP WITH TIME ZONE` so that H2 runs them too. The area's 22 tests run here, once, on a test-only Spring Boot application with the same chassis, against the real migrations (the reference built its test tables from the entities instead).
+- [x] **S03-03 Run warehousing in the modulith** · modulith
+  Nothing to wire: component scanning finds the area. Added: the validation starter (without it `@Valid` checks nothing), and `WarehousingServedTest` for the route, the role, the tenant and validation.
+- [x] **S03-04 Run warehousing as a service** · services
+  The same two additions as the modulith's.
+- [x] **S03-05 One walkthrough, two implementations** · docs
   The warehouse walkthrough against the edge; run it, switch, run it again: same answers, same rows.
 
 ## S4 — Transportation and the flows between areas

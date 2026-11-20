@@ -23,6 +23,8 @@ flowchart LR
 * You open the track with `argocd app sync`. Every sync is a journey with an inspection before departure and a check on arrival.
 * Clients (curl, the smoke tests, later the console) only know the platform.
 
+What a switch does, step by step, as Argo CD shows it: xref:switching.adoc[Switching sides: what happens].
+
 [[reading-a-sync]]
 == Reading a sync: three questions
 
@@ -226,3 +228,65 @@ A values change builds no image (its folder did not change); the new pods are a 
 === After a change in base or shared
 
 The applications do not see it until their images are built again: in ff-logistic-modulith (and ff-logistic-services) on GitHub, *Actions*, *CI*, *Run workflow*. That run builds on the libraries' latest main and publishes every image (xref:decisions.adoc#d11[decision 11]).
+
+[[s3]]
+== S3: a warehouse, on either side
+
+What exists: the first business area, warehousing, written once in ff-logistic-shared and served by the modulith or by the warehousing service. What it shows: the same requests give the same answers and write the same rows, whichever side is active.
+
+[mermaid]
+....
+flowchart LR
+  subgraph shared["ff-logistic-shared: written once"]
+    STD["ff-domain-standards<br/>GS1, ISO 6346, emissions"]
+    WH["ff-domain-warehousing<br/>api, domain, service,<br/>db/migration/warehousing"]
+    STD --> WH
+  end
+  WH --> M["modulith<br/>logistics-app"]
+  WH --> S["warehousing service<br/>behind the gateway"]
+  M & S --> DB[("ff_logistics<br/>wms_* tables")]
+....
+
+In S3 the two sides really are the same: warehousing talks to no other area yet, so both only *include* the jar. The differences start in S4, when areas call each other.
+
+=== The receiving story
+
+A supplier announces a delivery (an ASN: advance shipping notice). When the goods arrive, they are built into pallets; each pallet gets an SSCC, the 18-digit GS1 number printed on its label, and is put away into a bin.
+
+[mermaid]
+....
+sequenceDiagram
+  participant C as curl
+  participant W as warehousing<br/>(modulith or service)
+  participant D as ff_logistics
+  C->>W: POST /api/v1/wms/warehouses (GLN, GS1 company prefix)
+  W->>D: wms_warehouses
+  C->>W: POST /api/v1/wms/warehouses/{id}/bins
+  W->>D: wms_bin_locations
+  C->>W: POST /api/v1/wms/asns (lines: GTIN, quantity)
+  W->>D: wms_asns, wms_asn_lines (EXPECTED)
+  C->>W: POST /api/v1/wms/asns/{id}/pallets (GTIN, quantity, bin)
+  W->>D: next value of wms_sscc_serial_seq
+  W->>D: wms_pallets (SSCC), the line's received quantity, the ASN's status
+  W-->>C: {"sscc": "08690001…", "asnStatus": "RECEIVING"}
+....
+
+=== Delivering it
+
+The order of xref:delivery.adoc#order[a sprint's delivery]: *shared* first, then *modulith* and *services*. Their merges change the applications' folders, so the push runs publish new images, built on shared's new main; no *Run workflow* is needed. Merged the other way round, the images would be built on the old cores.
+
+=== After the merge: the first real canary
+
+The S3 images are new versions of running applications, so this is the first sync that goes through the canary steps (S2's first sync created the Rollout, and a new Rollout starts at 100 %).
+
+[source,bash]
+----
+argocd app sync logistics-app
+kubectl argo rollouts get rollout logistics-app -n ff-logistics --watch
+----
+
+PreSync migrates warehousing to version 3. Then one pod of four runs the new version (25 %), the analysis asks its release health three times, the Rollout goes to 50 %, waits 30 seconds, and finishes at 100 %.
+
+=== Run it, switch, run it again
+
+The steps, one command block at a time, each with the answer to expect (recorded on the first run): xref:try-warehousing.adoc[Try it: a warehouse, step by step].
