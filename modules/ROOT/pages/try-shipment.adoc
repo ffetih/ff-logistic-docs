@@ -309,6 +309,6 @@ The delivery's time (step 5 and step 8 answer with `deliveredAt`) against the ar
 | Services, `SHP-10005` | 12:46:25.996 | 12:46:26.505 | ≈ 0.51 s
 |===
 
-Both eventually consistent, both well under a second on an idle laptop: the modulith hands the event to another thread in its JVM; the services send it through the outbox to Kafka, and another process reads it. What the numbers do not show is what can stand in between: on the services side, a broker and another service that may be down. That is the next exercise.
+Both eventually consistent, both well under a second on an idle laptop: the modulith hands the event to another thread in its JVM; the services send it through the outbox to Kafka, and another process reads it. What the numbers do not show is what can stand in between: on the services side, a broker and another service that may be down. That is the next exercise: xref:try-failures.adoc[Try it: failure drills].
 
 Switch back to the modulith when done (xref:switching.adoc#back[back again]).

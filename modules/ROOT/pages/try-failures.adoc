@@ -1,0 +1,278 @@
+= Try it: failure drills
+:description: The S4 failure drills: stop the warehousing service, then Kafka, deliver a shipment while it is down, and watch where the delivery waits until it arrives.
+
+xref:try-shipment.adoc[Try it: a shipment to a warehouse] showed flow 2 when everything is up: the arrival opens half a second after the delivery. Here, two parts of the services side are stopped on purpose, one at a time, and a shipment is delivered while they are down. The question in each drill: *is the delivery lost, and if not, where does it wait?*
+
+The answers shown are from the first run, on 2026-11-20, on the services side (xref:try-shipment.adoc#services[step 7 of the shipment steps]). They use that page's variables: `E`, `PSQL`, and `SHP2`, the shipment whose plan is booked again here.
+
+[[picture]]
+== The picture: two waiting rooms
+
+[source]
+----
+ transportation ──► [ outbox table ] ──► Kafka ──► [ group's offset ] ──► warehousing
+                     drill 2 waits here             drill 1 waits here
+----
+
+* *The outbox* (decision xref:decisions.adoc#d12[12]) is a table in transportation's own schema. The delivery and its event are written in one transaction; sending the event to Kafka comes after, and is tried again until it works.
+* *The consumer group's offset* is Kafka's note of how far the group `warehousing` has read each partition. A message the group has not read yet stays in the topic, however long nobody reads it.
+
+A token expires after a few minutes, and an expired one answers `401` with an *empty body*: `curl -s … | jq` then prints nothing at all. Every block below that calls the API therefore takes a fresh one first, or prints the HTTP code.
+
+[source,bash]
+----
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+curl -s -o /dev/null -w "%{http_code}\n" "${H[@]}" $E/api/v1/tms/shipments
+----
+
+✅ `200`.
+
+[[warehousing-down]]
+== Drill 1: the warehousing service is down
+
+=== 1a. Stop warehousing
+
+[source,bash]
+----
+kubectl -n ff-logistics scale rollout warehousing --replicas=0
+kubectl -n ff-logistics wait --for=delete pod -l app.kubernetes.io/name=warehousing --timeout=90s
+----
+
+✅ `rollout.argoproj.io/warehousing scaled`, then `condition met` for each pod. Warehousing is an Argo *Rollout*, not a Deployment: `kubectl rollout status deploy/warehousing` finds nothing.
+
+=== 1b. Book, depart, deliver
+
+[source,bash]
+----
+SHP3=$(echo "$SHP2" | jq '{consignorName, consigneeName, destinationGln, equipmentCode, sscc, incoterm, origin,
+  destination, grossWeightKg, legs: [.legs[] | {mode, origin, destination, distanceKm, carrierReference}]}' \
+  | curl -s "${H[@]}" $E/api/v1/tms/shipments -d @-)
+ID3=$(echo "$SHP3" | jq -r .id); echo "$SHP3" | jq -r .shipmentNumber
+curl -s -o /dev/null -w "departure %{http_code}\n" -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID3/departure
+curl -s "${H[@]}" $E/api/v1/tms/shipments/$ID3/delivery -d '{"receivedBy":"Dock 2"}' | jq -r .status
+curl -s -o /dev/null -w "arrivals %{http_code}\n" "${H[@]}" $E/api/v1/wms/arrivals
+----
+
+✅ Transportation does not need warehousing to deliver. Only the gateway notices: nobody is behind `/api/v1/wms`, and after its wait it answers `504`.
+
+----
+SHP-10006
+departure 200
+DELIVERED
+arrivals 504
+----
+
+=== 1c. Where is the delivery now?
+
+Two views: what is *in* the topic, and what the group has *read*.
+
+[source,bash]
+----
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:9092 --topic ff.logistics.tms.shipment-delivered
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group warehousing
+----
+
+✅ Partition 0 holds two messages; the group has read one of them. The second is the delivery, waiting:
+
+----
+ff.logistics.tms.shipment-delivered:0:2
+ff.logistics.tms.shipment-delivered:1:0
+ff.logistics.tms.shipment-delivered:2:0
+
+Consumer group 'warehousing' has no active members.
+
+GROUP        TOPIC                                PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+warehousing  ff.logistics.tms.shipment-delivered  0          1               2               1    -
+----
+
+Why both commands: with no members, `--describe` lists only the partitions the group has read before. A message keyed to a partition the group never read would not show up there at all, and the lag would look like 0. The topic's own offsets always show it.
+
+=== 1d. Start warehousing again
+
+[source,bash]
+----
+kubectl -n ff-logistics scale rollout warehousing --replicas=2
+kubectl -n ff-logistics wait --for=condition=Ready pod -l app.kubernetes.io/name=warehousing --timeout=120s
+sleep 5; curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '.[0] | {shipmentNumber, status}'
+----
+
+✅ The new pods join the group, read from offset 1 on, and open the arrival:
+
+----
+{
+  "shipmentNumber": "SHP-10006",
+  "status": "OPEN"
+}
+----
+
+A partition the group has never read is read from its beginning (`auto-offset-reset: earliest` in warehousing's configuration). With Spring Boot's default, `latest`, a delivery on such a partition would have been skipped: not an error, simply never read.
+
+[[kafka-down]]
+== Drill 2: Kafka is down
+
+Now nothing can carry the message, so it has to wait before Kafka: in transportation's outbox. The upkeep (`OutboxUpkeep` in `ff-base-events`) looks every 30 seconds for failed rows that are due and tries them again. The wait between tries doubles: 1, 2, 4, 8 minutes. After 5 tries, about a quarter of an hour, it stops; the row stays for a person, and the gauge `ff.events.publications.exhausted` counts it. Keep Kafka down for a few minutes only.
+
+=== 2a. Stop Kafka
+
+[source,bash]
+----
+kubectl -n ff-logistics scale statefulset kafka --replicas=0
+kubectl -n ff-logistics wait --for=delete pod/kafka-0 --timeout=90s
+----
+
+✅ `pod/kafka-0 condition met`. Argo CD shows the Kafka application `OutOfSync` and leaves it so: workload applications have no automated sync.
+
+=== 2b. Book, depart, deliver, and time the calls
+
+Take a fresh token first (<<picture,above>>).
+
+[source,bash]
+----
+SHP4=$(echo "$SHP2" | jq '{consignorName, consigneeName, destinationGln, equipmentCode, sscc, incoterm, origin,
+  destination, grossWeightKg, legs: [.legs[] | {mode, origin, destination, distanceKm, carrierReference}]}' \
+  | curl -s "${H[@]}" $E/api/v1/tms/shipments -d @-)
+ID4=$(echo "$SHP4" | jq -r .id); echo "$SHP4" | jq -r .shipmentNumber
+curl -s -o /dev/null -w "departure %{http_code} %{time_total}s\n" -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID4/departure
+curl -s -o /tmp/d.json -w "delivery %{http_code} %{time_total}s\n" "${H[@]}" $E/api/v1/tms/shipments/$ID4/delivery -d '{"receivedBy":"Dock 2"}'
+jq -r .status /tmp/d.json; date +%T
+----
+
+✅ Both calls answer in a few milliseconds, as if nothing were wrong:
+
+----
+SHP-10007
+departure 200 0.027484s
+delivery 200 0.023937s
+DELIVERED
+16:06:35
+----
+
+The caller does not feel the outage at all. The sending happens after the commit, and the Kafka producer had already looked up where the topic lives, so it took the message into its buffer without waiting. Had it not known the topic yet, the call would have waited up to `max.block.ms` (10 s) for an answer from Kafka first.
+
+=== 2c. Watch the outbox, with Kafka still down
+
+[source,bash]
+----
+for i in 1 2 3 4 5 6; do date +%T; $PSQL "select regexp_replace(event_type, '.*\.', '') as event, status,
+  completion_attempts as tries, last_resubmission_date::time(0) as last_try, completion_date::time(0) as done
+  from transportation.event_publication where publication_date > now() - interval '15 minutes'
+  order by publication_date"; sleep 30; done
+----
+
+✅ Two rows per shipment: the departure's `ShipmentProgressed` and the delivery's `ShipmentDelivered`. The first two rows are the previous shipment's, sent at once. The new ones go `PROCESSING` (a send is under way), `FAILED`, and are tried again (an excerpt; `date` prints local time, the database UTC):
+
+----
+16:06:45
+       event        |   status   | tries | last_try |   done
+--------------------+------------+-------+----------+----------
+ ShipmentProgressed | COMPLETED  |     1 | 13:03:24 | 13:03:24
+ ShipmentDelivered  | COMPLETED  |     1 | 13:03:24 | 13:03:24
+ ShipmentProgressed | PROCESSING |     1 | 13:06:36 |
+ ShipmentDelivered  | PROCESSING |     1 | 13:06:36 |
+
+16:07:15
+ ShipmentProgressed | FAILED     |     1 | 13:06:36 |
+ ShipmentDelivered  | FAILED     |     1 | 13:06:36 |
+
+16:07:46
+ ShipmentProgressed | PROCESSING |     2 | 13:07:38 |
+ ShipmentDelivered  | PROCESSING |     2 | 13:07:38 |
+
+16:08:16
+ ShipmentProgressed | FAILED     |     2 | 13:07:38 |
+ ShipmentDelivered  | FAILED     |     2 | 13:07:38 |
+----
+
+=== 2d. Start Kafka again, and watch the rows complete
+
+[source,bash]
+----
+kubectl -n ff-logistics scale statefulset kafka --replicas=1
+kubectl -n ff-logistics wait --for=condition=Ready pod/kafka-0 --timeout=120s
+----
+
+✅ `pod/kafka-0 condition met`. Then the loop of 2c again, a little longer (`1 2 3 4 5 6 7 8`). The rows do not complete the moment Kafka is back, but at the next try that is due:
+
+----
+16:12:57
+ ShipmentProgressed | FAILED    |     3 | 13:09:38 |
+ ShipmentDelivered  | FAILED    |     3 | 13:09:38 |
+
+16:13:57
+ ShipmentProgressed | COMPLETED |     4 | 13:13:38 | 13:13:38
+ ShipmentDelivered  | COMPLETED |     4 | 13:13:38 | 13:13:38
+----
+
+=== 2e. The end of the line
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '.[0] | {shipmentNumber, status, arrivedAt}'
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-get-offsets.sh \
+  --bootstrap-server localhost:9092 --topic ff.logistics.tms.shipment-delivered
+----
+
+✅ The arrival is open. Its `arrivedAt` is the time of the delivery, carried in the event, not the time the message came through:
+
+----
+{
+  "shipmentNumber": "SHP-10007",
+  "status": "OPEN",
+  "arrivedAt": "2026-11-20T13:06:35.815166Z"
+}
+ff.logistics.tms.shipment-delivered:0:2
+ff.logistics.tms.shipment-delivered:1:0
+ff.logistics.tms.shipment-delivered:2:1
+----
+
+This message was keyed to partition 2, one the group had never read before. It was read, from its beginning: drill 1's `earliest` at work.
+
+[[timeline]]
+=== The timeline, and what the backoff costs
+
+[cols="1,2,2,2",options="header"]
+|===
+| Try | When (UTC) | Kafka | Row
+
+| 1 | 13:06:36, the delivery | down | `FAILED` within 40 s
+| 2 | 13:07:38, 1 min later | down | `FAILED`
+| 3 | 13:09:38, 2 min later | still down | `FAILED`
+| 4 | 13:13:38, 4 min later | up | `COMPLETED`
+|===
+
+Each try came on time: the wait since the last one, plus up to 30 s until the upkeep's next look (try 2 after 62 s). Kafka was started again only after try 3, at about 13:10; the event then waited three and a half more minutes, with Kafka up, for try 4. That is the price of the doubling wait: a long outage is not hammered with sends, and a short one is followed by a few minutes of delay. The arrival opened about seven minutes after the delivery, against half a second when everything is up.
+
+Not one delivery was lost, and nobody had to do anything but start the stopped part again.
+
+[[modulith]]
+== And the modulith?
+
+The backlog asked: on the modulith, what is there to stop? Little. Transportation and warehousing are modules in one process, the event goes from one thread to another, and there is no broker in between. If the process is down, both are, and the delivery itself is refused: nothing was promised, so nothing can go missing.
+
+The outbox is there too (schema `modulith`), and for the case that remains: the process stops after the delivery's commit, before the listener has opened the arrival. Its row stays `PROCESSING`; after five minutes the registry calls it stale and marks it `FAILED`, and the upkeep tries it again, as above. That drill needs the pod to stop in a window of a quarter of a second, and was not run here.
+
+[[lessons]]
+== Things that tripped us up
+
+[cols="2,3",options="header"]
+|===
+| What we saw | Why
+
+| A step prints nothing, not even an error
+| The token had expired: `401`, empty body. Take a new one; print `+%{http_code}+` when unsure.
+
+| `--describe --group` shows `LAG 0`, with a delivery waiting
+| The group had never read the message's partition, so it was not listed. `kafka-get-offsets.sh` shows what is in the topic.
+
+| `kubectl logs -l …` misses lines from a few minutes ago
+| With a label selector, `kubectl logs` shows the last 10 lines per pod. Add `--tail=-1`.
+
+| `kubectl rollout status deploy/warehousing` fails
+| Warehousing is an Argo Rollout. Wait for the pods instead: `kubectl wait --for=condition=Ready pod -l …`.
+|===
+
+Switch back to the modulith when done (xref:switching.adoc#back[back again]).
