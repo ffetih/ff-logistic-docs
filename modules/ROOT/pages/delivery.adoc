@@ -3,6 +3,7 @@
 
 The walkthrough shows *what to do* in S2 (xref:walkthrough.adoc#s2[S2: from a commit to a canary]).
 This page explains *how the pieces fit*, and it records what went wrong on the first run and why.
+It ends where an image is published and its tag committed; from there, xref:gitops.adoc[GitOps] follows it into the cluster.
 
 [[picture]]
 == The picture to keep in mind
