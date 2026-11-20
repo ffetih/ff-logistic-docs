@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Builds every FF Logistic image from the six repositories checked out side by side
 # (D:\dev\workspace\ff-logistic) and imports it into the k3d cluster, tagged "local".
-# Until CI publishes images (S2), this is how a change reaches the cluster.
+# Since S2, CI publishes the images to GHCR and records their tags; this script is for trying a
+# change on the cluster before pushing it.
 #
 #   tools/build-local-images.sh              # everything
 #   tools/build-local-images.sh modulith     # only the modulith (base and shared are still built)
 #   tools/build-local-images.sh services
 #
-# Needs JDK 25, Docker and k3d. The images' values files (deploy/apps/*/image-local.yaml) say
-# tag "local", so a sync after this picks them up; delete the pods, or sync with --force, for
-# Kubernetes to start them again from the new image.
+# Needs JDK 25, Docker and k3d. The cluster runs these images only for an application whose
+# deploy/apps/<name>/image-local.yaml says tag "local" (set by hand, not committed); CI writes
+# the commit's tag there otherwise.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 CLUSTER=${CLUSTER:-ff-logistic}
