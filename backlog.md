@@ -202,8 +202,8 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
   Transportation sends its events to Kafka through its outbox (schema `transportation`), keyed by the shipment; warehousing reads them in the consumer group `warehousing`, into a type of its own, and opens the arrival; a message it cannot read goes to `….warehousing.dlt`, one that fails otherwise is tried twice first. Tested against a broker in the test JVM.
 - [x] **S04-06 One shipment through both** · docs
   A "Try it" page, from booking to the arrival at the dock, on each side; the walkthrough's S4.
-- [ ] **S04-07 First failure drills** · docs
-  On the services side: stop the warehousing service, deliver, start it again; stop Kafka, deliver, start it again. On the modulith: what is there to stop? Written down with what was observed.
+- [x] **S04-07 First failure drills** · docs
+  On the services side: stop the warehousing service, deliver, start it again; stop Kafka, deliver, start it again. On the modulith: what is there to stop? Written down with what was observed: a "Try it" page. No delivery lost; with Kafka down the event waited in the outbox for four tries, about seven minutes.
 
 ## S5 — Routing and documents
 
