@@ -4,6 +4,7 @@
 * xref:plan.adoc[Plan]
 * xref:walkthrough.adoc[Walkthrough]
 ** xref:try-warehousing.adoc[Try it: a warehouse]
+** xref:switching.adoc[Switching sides: what happens]
 * xref:delivery.adoc[Delivery: CI, Maven, packages]
 * xref:glossary.adoc[Glossary]
 * Repositories

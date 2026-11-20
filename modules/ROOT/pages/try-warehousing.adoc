@@ -3,7 +3,7 @@
 
 The receiving story of xref:walkthrough.adoc#s3[S3], on the modulith, then on the services, against the same edge and the same rows.
 Run one block at a time and compare its answer with the ✅ line before going on.
-The answers shown are the ones from the first run, on 2026-11-20.
+The answers shown are the ones from the first run, on 2026-11-20, all twelve steps.
 
 Everything runs in one WSL terminal: the later steps use the variables (`E`, `TOKEN`, `H`, `WH`, `ASN`) that the earlier ones set. A new terminal needs step 2 again, and `WH` and `ASN` from step 3 and 4 (or from `GET /api/v1/wms/warehouses` and `/api/v1/wms/asns`).
 
@@ -161,6 +161,8 @@ curl -s "${H[@]}" $E/api/v1/wms/warehouses -d '{}' | jq '{status, title}'
 [[switch]]
 == Switch to the services
 
+What each of the next two steps sets in motion, as Argo CD shows it: xref:switching.adoc[Switching sides: what happens].
+
 === 7. Move the lever
 
 In ff-logistic-runtime, the switch is one line, committed to main (xref:walkthrough.adoc#picture[the railway junction]):
@@ -191,13 +193,13 @@ argocd app sync -l ff-logistic/implementation=services
 argocd app sync edge
 ----
 
-✅ Every sync `Succeeded`; the edge's smoke test ends with `info the services side answered (through the gateway)`.
+✅ Every sync `Succeeded` (in the Argo CD UI: `Missing`, then `Syncing` while the migration Job runs, then `Healthy`); the edge's smoke test ends with `info the services side answered (through the gateway)`.
 
 The warehousing service's migration Job finds version 3 already applied and adds nothing.
 
 === 9. Ask again, through the same edge
 
-Same terminal, same variables. If the token has expired, step 2 again.
+Same terminal, same variables. The token has most likely expired by now: get a new one (the `TOKEN=` and `H=` lines of step 2).
 
 [source,bash]
 ----
@@ -243,7 +245,16 @@ kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logist
    from wms_pallets p join wms_asns a on a.id = p.asn_id order by p.created_at"
 ----
 
-✅ Two rows, consecutive serials; the first written by the modulith, the second by the warehousing service. Nothing in the rows says which: the tables are the same, by construction (xref:decisions.adoc#d3[decision 3]).
+✅ Two rows, consecutive serials; the first written by the modulith, the second by the warehousing service:
+
+----
+        sscc        | quantity |  asn_number   |  status  |          created_at
+--------------------+----------+---------------+----------+-------------------------------
+ 086900010001000010 |       60 | ASN-2026-0001 | RECEIVED | 2026-11-20 09:33:13.812769+00
+ 086900010001000027 |       60 | ASN-2026-0001 | RECEIVED | 2026-11-20 09:50:34.180841+00
+----
+
+Nothing in the rows says which side wrote them: the tables are the same, by construction (xref:decisions.adoc#d3[decision 3]). The warehousing history (step 1's query) still has its four rows: the service's migration Job found version 3 and wrote nothing.
 
 === 12. Back to the modulith
 

@@ -1,0 +1,198 @@
+= Switching sides: what happens
+:description: What a switch between the modulith and the services does, step by step, as Argo CD shows it; recorded on a real switch with data.
+
+The switch is one line in Git (xref:decisions.adoc#d4[decision 4]).
+This page follows what that one line sets in motion, in the order Argo CD shows it, from a real switch on 2026-11-20: the modulith had received the first pallet of an ASN, the services received the second (xref:try-warehousing.adoc[Try it: a warehouse]).
+
+[[picture]]
+== The picture to keep in mind
+
+The railway junction of the walkthrough (xref:walkthrough.adoc#picture[the picture]), now slowed down:
+
+[mermaid]
+....
+flowchart LR
+  L["1 lever<br/>implementation.yaml<br/>commit + push"] --> A["2 signalman<br/>ApplicationSet<br/>reads Git"]
+  A --> R["3 old track removed<br/>Applications deleted,<br/>their pods with them"]
+  A --> N["4 new track drawn<br/>Applications created:<br/>Missing, OutOfSync"]
+  N --> S["5 track opened<br/>argocd app sync:<br/>migrate, roll out, smoke test"]
+  S --> E["6 platform checked<br/>argocd app sync edge:<br/>which side answers?"]
+....
+
+Steps 1, 5 and 6 are yours; 2, 3 and 4 follow by themselves. Nothing reaches the cluster until you sync: Git says what should run, the sync makes it run.
+
+[[what-moves]]
+== What moves, and what stays
+
+[cols="2,3,3",options="header"]
+|===
+| | Moves with the switch | Stays
+
+| Argo CD Applications
+| the side's own: `logistics-app`, or `warehousing`, `transportation`, `routing`, `gateway`
+| `edge`, `identity`, `postgres`, `kafka`, `keycloak`, `rustfs`, Argo CD itself
+
+| Kubernetes objects
+| the side's Rollouts, pods, Services, AnalysisTemplates, hook Jobs
+| the `edge` Service (port 8081), the database server and its volume
+
+| Data
+| nothing
+| every row, every sequence, every Flyway history: both sides use the same tables (xref:decisions.adoc#d3[decision 3])
+|===
+
+The edge Service never moves: it selects pods by a label (`ff-logistic/edge: "true"`), and whichever side runs carries it, the modulith's pods or the gateway's (xref:decisions.adoc#d5[decision 5]).
+
+[[steps]]
+== Step by step
+
+=== 1. The lever: a commit
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
+sed -i 's/^active: .*/active: services/' deploy/implementation.yaml
+git diff                      # -active: modulith  +active: services
+git commit -am "Switch to the services" && git push
+----
+
+Nothing in the cluster has changed yet. `curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info` still answers `200`: the modulith.
+
+=== 2. The signalman reads Git
+
+The ApplicationSet `ff-implementation` reads `implementation.yaml` every 60 seconds (`requeueAfterSeconds`), and Argo CD may remember a branch's head for a little longer. To not wait:
+
+[source,bash]
+----
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+----
+
+It is a matrix of two generators: the first reads `active: services` from runtime; the second lists `deploy/apps/*` in the repository named after it, `ff-logistic-services`. One Application per folder.
+
+=== 3. The old track is removed
+
+`logistics-app` is no longer generated, so the ApplicationSet deletes it. Its resources finalizer deletes what it deployed: the Rollout, its four pods, its Services.
+
+From here on *nothing answers on the edge*: the label it selects is on no running pod. The gap lasts until step 5 has made the new side healthy; it is as long as you take, because the syncs are manual on purpose (xref:#costs[what it costs]).
+
+=== 4. The new track is drawn
+
+Four Applications appear: `warehousing`, `transportation`, `routing`, `gateway`.
+
+[source,bash]
+----
+argocd app list -l ff-logistic/implementation=services
+----
+
+[cols="1,1,3",options="header"]
+|===
+| Health | Sync | Meaning
+
+| `Missing` | `OutOfSync` | The Application exists in Argo CD; nothing of it exists in the cluster yet. Git and the cluster differ, so: out of sync.
+|===
+
+=== 5. The track is opened: one sync per Application
+
+[source,bash]
+----
+argocd app sync -l ff-logistic/implementation=services
+----
+
+Each sync runs the same three phases (xref:walkthrough.adoc#reading-a-sync[reading a sync]); in the Argo CD UI, on `warehousing`:
+
+[cols="1,2,3",options="header"]
+|===
+| Phase | What the UI shows | What happens
+
+| PreSync
+| `Syncing`, _waiting for completion of hook batch/Job/warehousing-migrate-presync-…_
+| The migration Job runs before anything else; the rest of the sync waits for it. Here it found the warehousing area at version 3, written by the modulith, and added nothing.
+
+| Sync
+| The Rollout `rev:1`, two pods `running`; health `Healthy`
+| A Rollout that did not exist before starts at 100 %: no canary, there is no older version to compare with. A canary only runs when a running Rollout gets a new version.
+
+| PostSync
+| `warehousing-smoke-test-postsync-…` `completed`; `Sync OK`
+| The service's own smoke test, once everything is healthy.
+|===
+
+On the first switch with data, `warehousing` went from `Syncing` (12:46:20) to `Sync OK` (12:46:58): 38 seconds, most of it the JVM starting.
+
+=== 6. The platform is checked: the edge
+
+[source,bash]
+----
+argocd app sync edge
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info
+----
+
+The edge has nothing of its own to change (`configmap/edge-smoke-test unchanged`, `service/edge unchanged`): it is synced for its PostSync smoke test, which signs in, calls through the edge and reports the side that answered:
+
+----
+info the services side answered (through the gateway)
+----
+
+`/actuator/info` answers `404` now: the gateway has no such endpoint; the modulith has (`200`). That one status code is how the smoke test, and you, tell the sides apart.
+
+Each edge sync leaves its Job behind, named after the runtime commit it ran at (`edge-smoke-test-ea10b00-postsync-…` for the switch to the services, `…-7413eaa-…` for the switch back). Kubernetes deletes each a day after it finished, so the log of every switch of the day can still be read.
+
+[[timeline]]
+== The first switch with data, as it happened
+
+[mermaid]
+....
+sequenceDiagram
+  participant Y as you
+  participant G as Git (runtime)
+  participant AS as ApplicationSet
+  participant AC as Argo CD
+  participant K as cluster
+  Note over K: modulith answers; pallet 1 written (09:33 UTC)
+  Y->>G: push "Switch to the services" (ea10b00)
+  Y->>AS: refresh annotation
+  AS->>AC: delete logistics-app; create warehousing, transportation, routing, gateway
+  AC->>K: logistics-app's Rollout and pods deleted
+  Note over K: edge: no pod with the label, nothing answers
+  Y->>AC: argocd app sync -l ff-logistic/implementation=services
+  AC->>K: PreSync migrate (nothing to do), Rollouts at 100 %, PostSync smoke tests
+  Y->>AC: argocd app sync edge
+  AC->>K: edge smoke test: the services side answered
+  Note over K: gateway answers; pallet 2 written (09:50 UTC)
+  Y->>G: push "Switch to the modulith" (7413eaa)
+  Note over K: the same in reverse; the modulith reads RECEIVED
+....
+
+What the database showed afterwards:
+
+----
+        sscc        | quantity |  asn_number   |  status  |          created_at
+--------------------+----------+---------------+----------+-------------------------------
+ 086900010001000010 |       60 | ASN-2026-0001 | RECEIVED | 2026-11-20 09:33:13.812769+00
+ 086900010001000027 |       60 | ASN-2026-0001 | RECEIVED | 2026-11-20 09:50:34.180841+00
+----
+
+The first pallet from the modulith, the second from the warehousing service; consecutive serials from one sequence; nothing in the rows says which side wrote them. The warehousing history kept its four rows (0 to 3): no migration ran twice.
+
+[[back]]
+== Back again
+
+The same, the other way round:
+
+[source,bash]
+----
+sed -i 's/^active: .*/active: modulith/' deploy/implementation.yaml
+git commit -am "Switch to the modulith" && git push
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+argocd app sync logistics-app      # once it is listed
+argocd app sync edge
+----
+
+`logistics-app` comes back as a new Application: `Missing` and `OutOfSync`, then, after the sync, `Healthy` and `Synced`; its Rollout is new again, so it starts at 100 % without a canary.
+
+[[costs]]
+== What it costs, and why it is built this way
+
+* *A gap with no answer.* Between step 3 and the end of step 5 nothing behind the edge answers: a switch is a planned outage, not a release. The releases themselves (a new version of the running side) are the canaries, with no gap. A switch happens rarely and on purpose, to compare; running both sides at once was rejected because they would write the same tables and the same topics twice (xref:decisions.adoc#d4[decision 4]).
+* *Manual syncs.* With auto-sync, Argo CD would open the new track by itself and the gap would shrink to the start-up time. Every workload here syncs by hand, so each change to the cluster is a step you take and watch.
+* *Cold starts.* The new side's pods start from nothing: the first requests after a switch also warm up the JVMs.

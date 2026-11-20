@@ -23,6 +23,8 @@ flowchart LR
 * You open the track with `argocd app sync`. Every sync is a journey with an inspection before departure and a check on arrival.
 * Clients (curl, the smoke tests, later the console) only know the platform.
 
+What a switch does, step by step, as Argo CD shows it: xref:switching.adoc[Switching sides: what happens].
+
 [[reading-a-sync]]
 == Reading a sync: three questions
 
