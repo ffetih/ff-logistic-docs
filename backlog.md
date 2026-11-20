@@ -156,6 +156,8 @@ Goal: no image built by hand. Every repository builds and tests in CI, publishes
   Decision 11; the walkthrough's S2 part: the flow from a commit to a canary, the packages made public once, the first sync with `--prune`, a canary that aborts, rebuilding after a change in base or shared.
 - [x] **S02-10 Fetch Maven with retries and keep it cached** · runtime, docs
   The first run of base's CI failed before compiling anything: the Maven Wrapper's download of Maven from Maven Central failed once, and the re-run passed. `java-build.yml` now keeps `~/.m2/wrapper` in the Actions cache and fetches Maven in a step of its own, with four tries 15 s apart.
+- [x] **S02-11 Clone the repositories a build needs next to it** · runtime, shared, docs
+  shared's first CI run failed in `KeycloakRealmTest`: it loads runtime's Keycloak realm file by walking up to a sibling `runtime` folder, which exists on the developer's disk and not on the runner (and without Docker the test had always skipped itself, so it first ran on GitHub). A dependency the single repository hid: a test in shared reads a file in runtime. `java-build.yml` now clones what a repository builds on, and the repositories its tests read (`siblings`), next to the checkout under their short names, the same layout as `D:\dev\workspace\ff-logistic`; shared's CI declares `siblings: runtime`.
 
 
 ## S3 — Standards and warehousing
