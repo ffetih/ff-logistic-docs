@@ -123,52 +123,77 @@ This is the classic ports-and-adapters (hexagonal) shape, used here for one spec
 
 In the earlier single-repository version, the business areas hardly talked to each other. Without flows between them there is nothing to compare, so three are part of the design:
 
-[cols="3,1,2,2",options="header"]
+[cols="3,1,2,2,1",options="header"]
 |===
-| Flow | Kind | Modulith | Services
+| Flow | Kind | Modulith | Services | Since
 
-| Transportation asks routing for a leg's road distance | query | method call | HTTP, timeout, haversine fallback
-| A shipment delivered to a warehouse opens its receiving at warehousing | event | Modulith event | Kafka through the outbox
-| A completed route stop with proof of delivery delivers the shipment | event | Modulith event | Kafka through the outbox
+| A shipment delivered to a warehouse opens an inbound arrival there | event | Modulith event, through the outbox | Kafka, through the outbox | S4
+| Transportation asks routing for a leg's road distance | query | method call | HTTP, timeout, haversine fallback | S5
+| A completed route stop with proof of delivery delivers the shipment | event | Modulith event | Kafka through the outbox | S5
 |===
 
-The second flow, on each side:
+Each flow goes through ports (xref:decisions.adoc#d2[decision 2]): the cores do not know each other. Transportation publishes `ShipmentDelivered`, in its own words; warehousing offers `InboundArrivals.open(ShipmentArrival)`, in its own. The *wiring* that translates one into the other is the only part written twice, and it is small: a listener in the modulith's `flows` module, a Kafka consumer in the warehousing service.
+
+[[flow-2]]
+=== Flow 2, on each side
 
 [mermaid]
 ....
 sequenceDiagram
   autonumber
-  participant D as Driver app
-  box modulith: one process, one database transaction
+  participant D as client
+  box modulith: one process
     participant T as transportation
+    participant R as outbox<br/>modulith.event_publication
+    participant F as flows
     participant W as warehousing
   end
   D->>T: POST /api/v1/tms/shipments/{id}/delivery
   T->>T: shipment DELIVERED
-  T-->>W: ShipmentDelivered (in-process event)
-  W->>W: receiving opened
+  T->>R: ShipmentDelivered, one row per listener (same transaction)
   T-->>D: 200 OK
-  Note over T,W: The event is stored in the registry with the shipment.<br/>A failed listener is retried, and the delivery itself is never lost.
+  R-->>F: after the commit, on another thread
+  F->>W: InboundArrivals.open(ShipmentArrival)
+  W->>W: arrival OPEN (its own transaction, idempotent)
+  F-->>R: row completed
+  Note over T,W: Milliseconds apart, in one JVM: the window in which<br/>the shipment is delivered and the dock does not know yet.
 ....
 
 [mermaid]
 ....
 sequenceDiagram
   autonumber
-  participant D as Driver app
+  participant D as client
   participant G as gateway
   participant T as transportation
+  participant R as outbox<br/>transportation.event_publication
   participant K as Kafka
   participant W as warehousing
   D->>G: POST /api/v1/tms/shipments/{id}/delivery
   G->>T: forward
-  T->>T: shipment DELIVERED + outbox row (one transaction)
+  T->>T: shipment DELIVERED
+  T->>R: ShipmentDelivered (same transaction)
   T-->>D: 200 OK
-  T->>K: ShipmentDelivered (after commit)
-  K->>W: ShipmentDelivered
-  W->>W: receiving opened (its own transaction, idempotent)
-  Note over T,W: Between steps 3 and 7 the two areas disagree.<br/>That window is what eventual consistency means.
+  R->>K: after the commit: ff.logistics.tms.shipment-delivered, keyed by the shipment
+  R-->>R: row completed once Kafka has it
+  K->>W: the message, to the consumer group "warehousing"
+  W->>W: arrival OPEN (its own transaction, idempotent)
+  Note over T,W: Across processes and a broker: a longer window,<br/>and two more things that can be down (Kafka, the other service).
 ....
+
+Both sides are eventually consistent: the delivery commits first, the arrival follows. What differs is the size of the window, and what can go wrong in it:
+
+[cols="2,3,3",options="header"]
+|===
+| | Modulith | Services
+
+| Between the two areas | a method call on another thread | a broker, a network, another process
+| The listener fails | the row stays open; the outbox upkeep tries again later | the message is tried again, then goes to `….warehousing.dlt`
+| Kafka is down | not involved | the row stays open in `transportation.event_publication`; the upkeep sends it once Kafka is back
+| Delivered twice | possible (a retried row); the arrival opens once | possible (a resent row, a re-read message); the arrival opens once
+|===
+
+The outbox is the same library on both sides (ff-base-events, xref:decisions.adoc#d12[decision 12]); each process keeps it in a schema of its own.
 
 [[switch]]
 == The switch

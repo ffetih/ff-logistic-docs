@@ -1,0 +1,220 @@
+= Try it: a shipment to a warehouse, step by step
+:description: The S4 walkthrough as numbered steps: a shipment delivered to a warehouse opens an inbound arrival there, in-process on the modulith, over Kafka on the services.
+
+Flow 2 of xref:architecture.adoc#flow-2[the architecture]: a shipment is booked to the warehouse of xref:try-warehousing.adoc[Try it: a warehouse] (`IST-HDK`, GLN `8690001000011`), travels, and is delivered; the delivery opens an *inbound arrival* at that warehouse's dock. First on the modulith, then on the services, against the same edge.
+
+Run one block at a time and compare its answer with the ✅ line. The ✅ lines say what to expect; where a value depends on the run (ids, times), it says so.
+
+Everything runs in one WSL terminal; the later steps use the variables the earlier ones set.
+
+[[before]]
+== Before: the release and the schemas
+
+The S4 images are rolled out (`argocd app sync logistics-app`, xref:walkthrough.adoc#s4[walkthrough]).
+
+=== 1. The new tables, and the modulith's outbox
+
+[source,bash]
+----
+PSQL="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c"
+$PSQL "select 'transportation' area, version, description from transportation_flyway_history
+       union all select 'warehousing', version, description from warehousing_flyway_history where version::int >= 3
+       union all select 'modulith outbox', version, description from modulith.outbox_flyway_history
+       order by 1, 2"
+----
+
+✅ Transportation at version 2 (its tables), warehousing at 4 (the inbound arrivals), and a new schema `modulith` with its own outbox history:
+
+----
+      area       | version |      description
+-----------------+---------+------------------------
+ modulith outbox | 1       | event publication
+ transportation  | 0       | << Flyway Baseline >>
+ transportation  | 1       | transportation begins
+ transportation  | 2       | transportation tables
+ warehousing     | 3       | warehousing pallets
+ warehousing     | 4       | warehousing inbound arrivals
+----
+
+=== 2. A token, and two shortcuts
+
+[source,bash]
+----
+E=localhost:8081
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+curl -s "${H[@]}" $E/api/v1/wms/warehouses | jq '.[] | {code, gln}'
+----
+
+✅ The warehouse from S3 is still there: `{"code": "IST-HDK", "gln": "8690001000011"}`. `nexus.planner` is both a logistics planner and a warehouse operator of `ff-eu-freight`.
+
+[[modulith]]
+== On the modulith
+
+=== 3. Book a shipment to the warehouse
+
+From Cologne to the Istanbul hub: by road to the rail terminal, by train to Trieste, by Ro-Ro ferry to Istanbul, the last 60 km by road. `destinationGln` names the warehouse.
+
+[source,bash]
+----
+SHP=$(curl -s "${H[@]}" $E/api/v1/tms/shipments -d '{"consignorName":"Rhein Parts GmbH",
+  "consigneeName":"Istanbul Hadimkoy Hub","destinationGln":"8690001000011",
+  "equipmentCode":"CSQU3054383","sscc":"106141411234567897","incoterm":"DAP",
+  "origin":"Cologne Eifeltor","destination":"Istanbul Hadimkoy","grossWeightKg":18000,
+  "legs":[
+    {"mode":"ROAD","origin":"Cologne Eifeltor","destination":"Cologne Eifeltor Terminal","distanceKm":15,"carrierReference":"DE-K-FF-210"},
+    {"mode":"RAIL","origin":"Cologne Eifeltor Terminal","destination":"Trieste","distanceKm":1050,"carrierReference":"TXL-41877"},
+    {"mode":"SEA_RORO","origin":"Trieste","destination":"Istanbul Pendik","distanceKm":1450,"carrierReference":"DFDS-PT-2611"},
+    {"mode":"ROAD","origin":"Istanbul Pendik","destination":"Istanbul Hadimkoy","distanceKm":60,"carrierReference":"TR-34-FF-0417"}]}')
+echo "$SHP" | jq '{shipmentNumber, ecmrNumber, status, destinationGln, footprint}'
+ID=$(echo "$SHP" | jq -r .id)
+----
+
+✅ The first shipment of a fresh sequence, planned, with its footprint:
+
+----
+{
+  "shipmentNumber": "SHP-10001",
+  "ecmrNumber": "ECMR-10001",
+  "status": "PLANNED",
+  "destinationGln": "8690001000011",
+  "footprint": {
+    "totalDistanceKm": 2575.0,
+    "co2eKg": 1308.6,
+    "roadOnlyCo2eKg": 2873.7,
+    "savedCo2eKg": 1565.1,
+    "reductionPercent": 54.46
+  }
+}
+----
+
+The footprint (EN 16258 / ISO 14083 factors per transport mode): 18 t over 2,575 km by rail and sea emits 1.3 t CO2e, less than half of what the same trip by road alone would.
+
+=== 4. It travels
+
+[source,bash]
+----
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID/pickup | jq -r .status
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID/departure | jq -r .status
+----
+
+✅ `PICKED_UP`, then `DEPARTED`.
+
+=== 5. Delivered at the warehouse
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/tms/shipments/$ID/delivery -d '{"receivedBy":"Dock 2, A. Yilmaz"}' | jq '{status, deliveredAt}'
+curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '.[0] | {shipmentNumber, sscc, grossWeightKg, status}'
+----
+
+✅ The shipment `DELIVERED`, and an arrival open at the dock, for the same shipment:
+
+----
+{
+  "shipmentNumber": "SHP-10001",
+  "sscc": "106141411234567897",
+  "grossWeightKg": 18000.0,
+  "status": "OPEN"
+}
+----
+
+Nobody called warehousing: transportation published `ShipmentDelivered`, the `flows` module heard it after the commit and opened the arrival. An empty list means the second call was quicker than the listener; ask again.
+
+=== 6. What the outbox recorded
+
+[source,bash]
+----
+$PSQL "select listener_id, status, completion_attempts, completion_date is not null as completed
+       from modulith.event_publication order by publication_date"
+----
+
+✅ One row, for the flow's listener (`…flows.DeliveriesToWarehouses.on(…ShipmentDelivered)`), `COMPLETED` after one attempt. The pickup and the departure published `ShipmentProgressed` too, but nothing in the modulith listens to it, so the registry stored nothing for them.
+
+[[services]]
+== On the services
+
+=== 7. Switch
+
+As in xref:switching.adoc[Switching sides]: `active: services` in runtime, push, refresh the ApplicationSet, sync the four services and the edge.
+
+✅ The transportation service's migration Job creates its outbox, in a schema of its own:
+
+[source,bash]
+----
+$PSQL "select version, description from transportation.outbox_flyway_history"
+----
+
+----
+ version |    description
+---------+-------------------
+ 1       | event publication
+----
+
+=== 8. The same, through the services
+
+The token has expired by now: step 2's `TOKEN=` and `H=` again. Then a second shipment, the same plan with another order of the day:
+
+[source,bash]
+----
+SHP2=$(echo "$SHP" | jq '{consignorName, consigneeName, destinationGln, equipmentCode, sscc, incoterm, origin,
+  destination, grossWeightKg, legs: [.legs[] | {mode, origin, destination, distanceKm, carrierReference}]}' \
+  | curl -s "${H[@]}" $E/api/v1/tms/shipments -d @-)
+ID2=$(echo "$SHP2" | jq -r .id); echo "$SHP2" | jq -r .shipmentNumber
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID2/departure > /dev/null
+curl -s "${H[@]}" $E/api/v1/tms/shipments/$ID2/delivery -d '{"receivedBy":"Dock 2, A. Yilmaz"}' | jq -r .status
+sleep 2; curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '[.[] | {shipmentNumber, status}]'
+----
+
+✅ `SHP-10002`, `DELIVERED`, and now two arrivals: the one the modulith opened, and the one the warehousing service opened from Kafka:
+
+----
+[
+  {"shipmentNumber": "SHP-10002", "status": "OPEN"},
+  {"shipmentNumber": "SHP-10001", "status": "OPEN"}
+]
+----
+
+=== 9. What travelled over Kafka
+
+[source,bash]
+----
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic ff.logistics.tms.shipment-delivered \
+  --from-beginning --max-messages 1 --property print.key=true --timeout-ms 10000
+----
+
+✅ One message: the key is the shipment's id (`$ID2`), the value transportation's `ShipmentDelivered` as JSON, with `destinationGln`, `sscc` and `grossWeightKg`. Only one: the modulith's delivery in step 5 never left its JVM.
+
+[source,bash]
+----
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group warehousing
+----
+
+✅ The group `warehousing` on the topic, `LAG` 0 on every partition: every message has been read.
+
+=== 10. The outbox on this side
+
+[source,bash]
+----
+$PSQL "select listener_id, status, completion_attempts from transportation.event_publication order by publication_date"
+----
+
+✅ Rows for the Kafka externalization (here the listener is the sending itself, not a business listener), `COMPLETED`: the departure's `ShipmentProgressed` and the delivery's `ShipmentDelivered`, each sent once.
+
+[[database]]
+== What the database says
+
+=== 11. Two arrivals, one from each side
+
+[source,bash]
+----
+$PSQL "select a.shipment_number, a.status, a.created_at, w.code
+       from wms_inbound_arrivals a join wms_warehouses w on w.id = a.warehouse_id order by a.created_at"
+----
+
+✅ `SHP-10001` and `SHP-10002` at `IST-HDK`. The rows do not say which side opened them: the same core opened both, called once by a listener in the same JVM, once by a Kafka consumer in another process.
+
+Switch back to the modulith when done (xref:switching.adoc#back[back again]).

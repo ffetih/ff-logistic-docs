@@ -6,15 +6,19 @@ Adapter:: The implementation of a port for one side: a method call or a Modulith
 Analysis (canary):: A check Argo Rollouts runs while a new version takes a share of the traffic; when it fails, the release is rolled back.
 Area:: A business area: standards, warehousing, transportation or routing.
 ASN:: Advance shipping notice: the goods a warehouse should expect.
+Consumer group:: The name under which a service reads a Kafka topic (`warehousing`). Every group reads every message; within one group, each message goes to one of its pods.
+Dead-letter topic:: Where a consumer puts a message it cannot handle, with the error in its headers, so the messages behind it still arrive. One per consumer: `ff.logistics.tms.shipment-delivered.warehousing.dlt`.
 Domain core:: The jar holding one area's entities, rules, REST API and migrations; the same jar runs in both implementations.
 Edge:: The Service on port 8081 that every client calls; it reaches whichever implementation is active.
 e-CMR:: The electronic consignment note of a road shipment.
 e-POD:: Electronic proof of delivery: the signature taken at a route stop.
 Eventual consistency:: Two areas that agree only after an event has travelled from one to the other; in between, they may disagree.
+Inbound arrival:: A delivered shipment at a warehouse's dock, waiting to be received. Opened by the delivery itself (flow 2), not by a person.
 Idempotent:: Doing something twice has the same effect as doing it once. A consumer that may receive an event twice must be.
 Modular monolith:: One deployable application whose code is divided into modules with enforced boundaries; here, Spring Modulith.
-Outbox:: A table written in the same transaction as the change it reports, from which events are sent afterwards, so a change is never committed without its event. Here, the Spring Modulith event publication registry.
+Outbox:: A table written in the same transaction as the change it reports, from which events are sent afterwards, so a change is never committed without its event. Here, the Spring Modulith event publication registry, one per process, in a schema of its own (`modulith`, `transportation`; xref:decisions.adoc#d12[decision 12]).
 Port:: An interface through which a core asks another area something, or tells it something, without knowing how the answer arrives.
 Row-level security (RLS):: A PostgreSQL rule that filters every row a session may see; here, by tenant.
+SSCC:: Serial Shipping Container Code: the 18-digit GS1 number on a pallet's label.
 Switch:: The commit to `runtime/deploy/implementation.yaml` that decides which implementation runs.
 Tenant:: One customer company; every row and every token carries its tenant.

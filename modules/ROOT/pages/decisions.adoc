@@ -87,3 +87,10 @@ Decision:: Two reusable workflows in ff-logistic-runtime, `java-build.yml` and `
 Costs:: A change in base or shared does not rebuild the applications by itself: their CI has a "Run workflow" button that publishes every image. Every build compiles the libraries again (about a minute). The libraries have no versions of their own: an application always builds on main.
 Considered:: GitHub Packages for the jars, with versions: right for libraries other teams depend on, a token in every clone here. A dispatch from base to the applications' CI: needs a personal access token stored as a secret in base.
 
+[[d12]]
+== 12. Each process keeps its outbox in a schema of its own
+
+Problem:: The services share one database (xref:#d3[decision 3]). Spring Modulith's event publication registry keeps the outbox in one table, `event_publication`. Shared by three services, a service that restarts would find the others' unfinished events among its own, and could publish them again, from the wrong process.
+Decision:: Every process that publishes events keeps its registry in a schema named after it: `modulith.event_publication` in the modulith, `transportation.event_publication` in the transportation service. The table is migrated like an area (`outbox`, with its history in the same schema), by a library written once, ff-base-events, which also keeps the outbox: unfinished events published again from one pod at a time (a PostgreSQL advisory lock named after the schema), with a doubling wait and a maximum of attempts, and completed rows deleted after a week. A process names its schema once, `ff.events.schema`; the registry's settings follow from it.
+Costs:: Two more schemas in the database. A switch leaves the other side's unfinished rows where they are: they are picked up when that side is active again. The business tables stay in the shared schema, unchanged.
+Considered:: One table per service in the shared schema (`transportation_event_publication`): no schema, but a table name to configure per process, and no natural place for its history. One shared table with a column for the process: the registry has no such column.
