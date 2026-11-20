@@ -193,15 +193,37 @@ cd /mnt/d/dev/workspace/ff-logistic/modulith
 git switch sprint/s02 && git status -sb             # everything pushed?
 
 gh pr create --base main --head sprint/s02 --fill   # open the PR; prints its link
-gh pr checks --watch                                 # wait for CI on the PR ("no checks reported": wait, retry)
-gh pr merge --merge                                  # merge; keep the sprint branch
+sleep 10; gh pr checks --watch                       # wait for CI on the PR (see "A run needs a moment")
+gh pr merge --merge                                  # merge only on green; keep the sprint branch
 
 gh workflow run ci.yml --ref main                    # only when images must be published (see the table above)
-gh run watch                                         # pick the run, follow it live
+sleep 10; gh run watch                               # pick the run, follow it live
 gh run rerun <run-id> --failed                       # re-run only the failed jobs, same inputs
 
 git switch main && git pull                          # bring the bot's tag commit home
 ----
+
+[[a-moment]]
+=== A run needs a moment
+
+`gh pr checks --watch` and `gh run watch` watch runs that *exist*. Right after a push, a pull request or a merge, GitHub has received the event but not created the run yet, for a few seconds: watched too early, `gh` finds nothing (`no checks reported`, `found no in progress runs to watch`) and stops. A merge right after that merges without having seen the checks. Hence the `sleep 10` before each watch.
+
+[[auto-merge]]
+=== Let GitHub merge on green
+
+Safer than watching: ask GitHub to merge the pull request by itself once its checks have passed.
+
+[source,bash]
+----
+gh pr merge --auto --merge
+----
+
+It needs two settings in each repository, once, on github.com:
+
+. *Settings → General → Pull Requests → Allow auto-merge.*
+. *Settings → Branches → Add branch ruleset* (or *Add rule*) for `main`: *Require status checks to pass*, with the check of that repository's CI: `build / Build and test` in the Java repositories, `build` in ff-logistic-docs.
+
+With the second one, GitHub also refuses a merge by hand while a check is red: the S3 documentation was merged that way once, and the site did not deploy until a fix followed (xref:#first-run[below]).
 
 Other useful ones:
 
@@ -308,6 +330,11 @@ None was a bug in the applications; each was something about the delivery itself
 |GHCR refused to write the tag into the brand-new package the first time it was created. Re-running the failed job, unchanged, worked.
 |Nothing. +
 *Rule*: on a first publish, `denied` → `gh run rerun <id> --failed` once before looking further.
+
+|*docs*, S3: the site's check failed with `skipping reference to missing attribute: http_code`, and the pull request was merged anyway.
+|In AsciiDoc, a name in braces inserts an attribute, also inside inline code such as `+curl -w "%{http_code}"+`; there is no attribute `http_code`, and the site build treats every warning as an error. The merge was done right after the push, before the check had even started (xref:#a-moment[a run needs a moment]).
+|The inline code marked as literal text (plus signs inside the backticks); auto-merge with a required check. +
+*Rule*: merge on green only, and let GitHub enforce it.
 
 |*modulith, services*: `gh workflow run` answered `HTTP 404`; `gh pr create` said `not a git repository`.
 |`ci.yml` wasn't on `main` yet (its PR wasn't merged), and `gh pr create --fill` was run from the parent folder, which isn't a repository. The other lines of the pasted block failed after it.
