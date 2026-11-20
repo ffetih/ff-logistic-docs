@@ -6,7 +6,7 @@ Two flows join routing and transportation (xref:architecture.adoc#flows[the flow
 * *Flow 1*, a question: transportation asks routing for a road leg's distance (xref:architecture.adoc#flow-1[on each side]).
 * *Flow 3*, an event: a completed route stop delivers the shipment it carried (xref:architecture.adoc#flow-3[on each side]), and flow 2 can follow.
 
-The steps run on the services side; the answers shown are from the first run, on 2026-11-20 and 21. They use the territory `IST-EU` of xref:try-route.adoc[Try it: a route].
+The steps run on the services side; the answers shown are from the first run, on 2026-11-20 and 21. In a new terminal, run step 1 first: the token, `ROAD` and `plan` live in one terminal only. They use the territory `IST-EU` of xref:try-route.adoc[Try it: a route].
 
 [[setup]]
 == 1. A token, and a road leg by its ends
@@ -110,4 +110,74 @@ curl -s "${H[@]}" $E/api/v1/geo/routes/$RID/stops/IST-ESN/completion -d '{"recei
 sleep 2; curl -s "${H[@]}" $E/api/v1/tms/shipments/$SID | jq '{shipmentNumber, status, receivedBy, deliveredAt}'
 ----
 
-✅ The stop is `COMPLETED`, and a moment later the shipment is `DELIVERED`, received by the same person, at the stop's time.
+✅ The route carries the shipment on its stop, and the completion delivers it:
+
+----
+SHP-10011 PLANNED
+{"routeNumber": "RTE-5003", "stop": {"stopCode": "IST-ESN", "shipmentNumber": "SHP-10011", "status": "PLANNED"}}
+{"stopCode": "IST-ESN", "status": "COMPLETED", "receivedBy": "Ayse Demir", "completedAt": "2026-11-20T23:41:25.761285156Z"}
+{"shipmentNumber": "SHP-10011", "status": "DELIVERED", "receivedBy": "Ayse Demir", "deliveredAt": "2026-11-20T23:41:25.761285Z"}
+----
+
+The shipment took its time from the event, not from its own clock: the same instant, without the last three digits. Java's `Instant` keeps nanoseconds; PostgreSQL's `timestamp with time zone` keeps microseconds. Routing answered with the value still in memory, transportation with the one read back from the database; read the route again and routing shows `.761285Z` too. Nothing is lost that a person would notice, but two systems comparing the values for equality would disagree.
+
+[[flow-3-path]]
+== 5. The path the event took
+
+[source,bash]
+----
+PSQL="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c"
+$PSQL "select regexp_replace(event_type, '.*\.', '') as event, status, completion_attempts as tries,
+  publication_date::time(3) as published, completion_date::time(3) as done
+  from routing.event_publication order by publication_date desc limit 2"
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group transportation
+----
+
+✅ The routing service's own outbox (new in S5) sent the event 0.24 s after the commit; the consumer group `transportation` has two members, the two pods, which share the topic's three partitions:
+
+----
+       event        |  status   | tries |  published   |     done
+--------------------+-----------+-------+--------------+--------------
+ RouteStopCompleted | COMPLETED |     1 | 23:41:25.77  | 23:41:26.011
+
+GROUP           TOPIC                                 PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  HOST
+transportation  ff.logistics.geo.route-stop-completed 0          -               0               -    /10.42.0.105
+transportation  ff.logistics.geo.route-stop-completed 1          -               0               -    /10.42.0.105
+transportation  ff.logistics.geo.route-stop-completed 2          1               1               0    /10.42.0.106
+----
+
+The message is keyed by the route plan, so every stop of one route lands on the same partition, in order.
+
+[[three-areas]]
+== 6. One stop, three areas
+
+The same, for a shipment to the warehouse `IST-HDK` (its GLN as `destinationGln`): the delivery publishes `ShipmentDelivered`, and flow 2 opens an arrival there.
+
+[source,bash]
+----
+SHP=$(curl -s "${H[@]}" $E/api/v1/tms/shipments -d "$(echo "$ROAD" | jq '. + {destinationGln: "8690001000011"}')")
+SID=$(echo "$SHP" | jq -r .id); SNO=$(echo "$SHP" | jq -r .shipmentNumber)
+RID=$(curl -s "${H[@]}" $E/api/v1/geo/routes -d '{"territoryCode":"IST-EU","vehiclePlate":"34 FF 0417",
+  "depotLatitude":41.10,"depotLongitude":28.65,"vehicleCapacityKg":3500,"averageSpeedKmh":40,"stops":[
+  {"stopCode":"IST-HDK","customerName":"FF Hadimkoy Warehouse","latitude":41.10,"longitude":28.66,
+   "demandWeightKg":800,"serviceMinutes":15,"shipmentNumber":"'$SNO'"}]}' | jq -r .id)
+curl -s -o /dev/null -w "stop %{http_code}\n" "${H[@]}" $E/api/v1/geo/routes/$RID/stops/IST-HDK/completion -d '{"receivedBy":"Dock 2"}'
+sleep 3; curl -s "${H[@]}" $E/api/v1/tms/shipments/$SID | jq -c '{shipmentNumber, status}'
+curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq -c '.[0] | {shipmentNumber, status}'
+----
+
+✅ The driver's one click, through two outboxes and two topics, each step in its own transaction:
+
+----
+stop 200
+{"shipmentNumber":"SHP-10012","status":"DELIVERED"}
+{"shipmentNumber":"SHP-10012","status":"OPEN"}
+----
+
+[mermaid]
+....
+flowchart LR
+  S["routing<br/>stop COMPLETED"] -->|"outbox → Kafka<br/>route-stop-completed"| T["transportation<br/>shipment DELIVERED"]
+  T -->|"outbox → Kafka<br/>shipment-delivered"| W["warehousing<br/>arrival OPEN"]
+....

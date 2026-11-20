@@ -342,3 +342,11 @@ Only the routing service's and the modulith's folders changed, so only their ima
 === Run it
 
 The steps, with what to expect: xref:try-route.adoc[Try it: a route].
+
+=== Routing talks to transportation
+
+Then the two flows: transportation asks routing for a road leg's distance (flow 1, a question: a method call, or HTTP with a timeout and the straight-line estimate when routing does not answer), and a completed route stop delivers the shipment it carried (flow 3, an event: through the outbox, in-process or over Kafka). Flow 3 can chain into flow 2: a stop completed at a warehouse opens an arrival there, three areas from one click.
+
+The routing service gained an outbox of its own (schema `routing`) and a topic; the transportation service, a consumer. Deliver: shared, then modulith and services, then docs. Deploy on the services side: routing first (it creates the topic), then transportation (it reads it).
+
+Steps and the first run's answers: xref:try-flows.adoc[Try it: routing talks to transportation], with the drill where routing is down.
