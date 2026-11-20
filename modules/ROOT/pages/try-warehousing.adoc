@@ -1,0 +1,261 @@
+= Try it: a warehouse, step by step
+:description: The S3 walkthrough as numbered steps: run them one at a time, compare with the expected answer.
+
+The receiving story of xref:walkthrough.adoc#s3[S3], on the modulith, then on the services, against the same edge and the same rows.
+Run one block at a time and compare its answer with the ✅ line before going on.
+The answers shown are the ones from the first run, on 2026-11-20.
+
+Everything runs in one WSL terminal: the later steps use the variables (`E`, `TOKEN`, `H`, `WH`, `ASN`) that the earlier ones set. A new terminal needs step 2 again, and `WH` and `ASN` from step 3 and 4 (or from `GET /api/v1/wms/warehouses` and `/api/v1/wms/asns`).
+
+[[before]]
+== Before: the release and the schema
+
+`argocd app sync logistics-app` has rolled out the S3 image through the canary (xref:walkthrough.adoc#s3[walkthrough]).
+
+=== 1. Did the migration run?
+
+[source,bash]
+----
+kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c \
+  "select version, description, installed_on from warehousing_flyway_history order by installed_rank"
+----
+
+✅ Versions 2 and 3, written by this sync's migration Job, after S1's 0 and 1:
+
+----
+ version |      description      |        installed_on
+---------+-----------------------+----------------------------
+ 0       | << Flyway Baseline >> | 2026-11-19 23:44:18.499055
+ 1       | warehousing begins    | 2026-11-19 23:44:18.512631
+ 2       | warehousing tables    | 2026-11-20 09:25:57.786349
+ 3       | warehousing pallets   | 2026-11-20 09:25:57.856805
+----
+
+The times are the database's, in UTC: 09:25 is 12:25 in Istanbul.
+
+[[modulith]]
+== On the modulith
+
+=== 2. A token, and two shortcuts
+
+[source,bash]
+----
+which jq || sudo apt install -y jq
+E=localhost:8081
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+echo ${TOKEN:0:20}
+----
+
+✅ `eyJhbGciOiJSUzI1NiIs`: the start of every token the identity service signs (`{"alg":"RS256",…`, Base64).
+
+* `nexus.planner` is a warehouse operator (`WAREHOUSE_OPERATOR`) of the tenant `ff-eu-freight`. Every row below gets that tenant from the token, never from the request.
+* `H` is a Bash array: `"${H[@]}"` expands it into the two `-H` options of every call.
+* The token lives as long as the sign-in answer's `expiresIn` says, in seconds: Keycloak's default of five minutes, as the realm sets none. A `401` later on means: run this step again.
+
+=== 3. A warehouse and a bin
+
+[source,bash]
+----
+WH=$(curl -s "${H[@]}" $E/api/v1/wms/warehouses -d '{"code":"IST-HDK","name":"Istanbul Hadimkoy Hub",
+  "gln":"8690001000011","gs1CompanyPrefix":"8690001","countryCode":"TR","city":"Istanbul",
+  "latitude":41.1025,"longitude":28.6512,"palletCapacity":12000}' | jq -r .id)
+echo $WH
+curl -s "${H[@]}" $E/api/v1/wms/warehouses/$WH/bins -d '{"code":"A-01-01","kind":"RACK","palletCapacity":4}' | jq
+----
+
+✅ The warehouse's id, then the bin:
+
+----
+c9ce1008-6cae-41d4-92e6-cb8622efc2d8
+{
+  "id": "cb2035e2-cef1-4b3f-bfb8-3c329c2a93d6",
+  "warehouseId": "c9ce1008-6cae-41d4-92e6-cb8622efc2d8",
+  "code": "A-01-01",
+  "kind": "RACK",
+  "palletCapacity": 4
+}
+----
+
+The GLN `8690001000011` is the company prefix `8690001`, the location reference `00001` and the GS1 check digit `1`; the warehouse is refused if the GLN does not start with the prefix or the check digit is wrong.
+
+=== 4. The supplier's ASN
+
+[source,bash]
+----
+ASN=$(curl -s "${H[@]}" $E/api/v1/wms/asns -d '{"asnNumber":"ASN-2026-0001","warehouseId":"'$WH'",
+  "supplierName":"Anatolia Textiles","expectedArrival":"2026-11-25",
+  "lines":[{"gtin":"8690001100018","skuCode":"TSHIRT-M-BLUE","quantity":120}]}' | jq -r .id)
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN | jq '{asnNumber, status, lines}'
+----
+
+✅ Announced, nothing received yet:
+
+----
+{
+  "asnNumber": "ASN-2026-0001",
+  "status": "EXPECTED",
+  "lines": [
+    {
+      "lineNumber": 1,
+      "gtin": "8690001100018",
+      "skuCode": "TSHIRT-M-BLUE",
+      "expectedQuantity": 120,
+      "receivedQuantity": 0
+    }
+  ]
+}
+----
+
+=== 5. The first pallet
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN/pallets \
+  -d '{"gtin":"8690001100018","quantity":60,"grossWeightKg":180.5,"binCode":"A-01-01"}' | jq '{sscc, asnStatus, binCode}'
+----
+
+✅ Half the line received, the pallet labelled:
+
+----
+{
+  "sscc": "086900010001000010",
+  "asnStatus": "RECEIVING",
+  "binCode": "A-01-01"
+}
+----
+
+----
+0 | 8690001 | 000100001 | 0
+extension   company     serial: the database        GS1 check
+digit       prefix      sequence wms_sscc_serial_seq digit
+----
+
+The serial comes from a database sequence, not from the application's memory: whichever process takes the next pallet, and however many pods it runs, the serial is never handed out twice.
+
+=== 6. The rules answer
+
+[source,bash]
+----
+# The same ASN number again: 409
+curl -s -o /dev/null -w "%{http_code}\n" "${H[@]}" $E/api/v1/wms/asns -d '{"asnNumber":"ASN-2026-0001","warehouseId":"'$WH'",
+  "supplierName":"x","expectedArrival":"2026-11-25","lines":[{"gtin":"8690001100018","skuCode":"X","quantity":1}]}'
+# An empty body: 400
+curl -s "${H[@]}" $E/api/v1/wms/warehouses -d '{}' | jq '{status, title}'
+----
+
+✅
+
+----
+409
+{
+  "status": 400,
+  "title": "Request Payload Validation Failed"
+}
+----
+
+* `409 Conflict`: an ASN number is used once per tenant.
+* `400` is Bean Validation (`@Valid` on the request body). It needs a validator on the classpath, the validation starter: without one, `@Valid` checks nothing and the empty request goes on into the use case. Both applications' `WarehousingServedTest` checks that it is there.
+
+[[switch]]
+== Switch to the services
+
+=== 7. Move the lever
+
+In ff-logistic-runtime, the switch is one line, committed to main (xref:walkthrough.adoc#picture[the railway junction]):
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
+git switch main && git pull
+sed -i 's/^active: .*/active: services/' deploy/implementation.yaml
+git commit -am "Switch to the services" && git push
+----
+
+✅ One changed line: `git show --stat HEAD` lists `deploy/implementation.yaml | 2 +-`.
+
+=== 8. Lay the track, and open it
+
+[source,bash]
+----
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+argocd app list -l ff-logistic/implementation=services
+----
+
+✅ Four Applications, `OutOfSync`: `warehousing`, `transportation`, `routing`, `gateway`. Empty instead: wait a minute and list again (the ApplicationSet reads Git).
+
+[source,bash]
+----
+argocd app sync -l ff-logistic/implementation=services
+argocd app sync edge
+----
+
+✅ Every sync `Succeeded`; the edge's smoke test ends with `info the services side answered (through the gateway)`.
+
+The warehousing service's migration Job finds version 3 already applied and adds nothing.
+
+=== 9. Ask again, through the same edge
+
+Same terminal, same variables. If the token has expired, step 2 again.
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN | jq '{asnNumber, status, received: .lines[0].receivedQuantity}'
+----
+
+✅ The ASN as the modulith left it:
+
+----
+{
+  "asnNumber": "ASN-2026-0001",
+  "status": "RECEIVING",
+  "received": 60
+}
+----
+
+=== 10. The second pallet, on the services
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN/pallets \
+  -d '{"gtin":"8690001100018","quantity":60,"grossWeightKg":180.5,"binCode":"A-01-01"}' | jq '{sscc, asnStatus}'
+----
+
+✅ The next serial of the same sequence, and the line complete:
+
+----
+{
+  "sscc": "086900010001000027",
+  "asnStatus": "RECEIVED"
+}
+----
+
+[[database]]
+== What the database says
+
+=== 11. Two pallets, one from each side
+
+[source,bash]
+----
+kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c \
+  "select p.sscc, p.quantity, a.asn_number, a.status, p.created_at
+   from wms_pallets p join wms_asns a on a.id = p.asn_id order by p.created_at"
+----
+
+✅ Two rows, consecutive serials; the first written by the modulith, the second by the warehousing service. Nothing in the rows says which: the tables are the same, by construction (xref:decisions.adoc#d3[decision 3]).
+
+=== 12. Back to the modulith
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
+sed -i 's/^active: .*/active: modulith/' deploy/implementation.yaml
+git commit -am "Switch to the modulith" && git push
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+argocd app sync logistics-app
+argocd app sync edge
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN | jq '{status}'
+----
+
+✅ `"status": "RECEIVED"`: the modulith sees what the service wrote.
