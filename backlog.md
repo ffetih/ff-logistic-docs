@@ -154,6 +154,9 @@ Goal: no image built by hand. Every repository builds and tests in CI, publishes
   The Pages workflow builds pull requests with warnings as failures and deploys nothing for them; a nightly run picks up documentation changes in the other repositories. `tools/build-local-images.sh` stays, for trying a change before pushing it.
 - [x] **S02-09 Describe the delivery** · docs
   Decision 11; the walkthrough's S2 part: the flow from a commit to a canary, the packages made public once, the first sync with `--prune`, a canary that aborts, rebuilding after a change in base or shared.
+- [x] **S02-10 Fetch Maven with retries and keep it cached** · runtime, docs
+  The first run of base's CI failed before compiling anything: the Maven Wrapper's download of Maven from Maven Central failed once, and the re-run passed. `java-build.yml` now keeps `~/.m2/wrapper` in the Actions cache and fetches Maven in a step of its own, with four tries 15 s apart.
+
 
 ## S3 — Standards and warehousing
 
