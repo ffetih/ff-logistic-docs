@@ -1,0 +1,141 @@
+= Try it: a route, step by step
+:description: The S5 routing area as numbered steps: a territory around the warehouse, a van's stops put in driving order, and a time window that changes the order.
+
+Routing puts a vehicle's stops in driving order and times them (xref:architecture.adoc[the architecture]). Two planners do it, written once in the routing core:
+
+* *Nearest neighbour*, for a few stops without time windows: from the depot always to the closest stop not visited yet.
+* *Timefold*, for longer lists and for any stop with a time window: every stop inside its window first (a hard rule), then the shortest distance (a soft one).
+
+The road distances come from a *road matrix*: the straight line times 1.24 by default, or an OSRM server when one is configured (`ff.routing.road-matrix`). The cluster runs no OSRM, so the steps below use the straight line.
+
+Run one block at a time and compare its answer with the ✅ line. The answers shown are from the first run, on 2026-11-20, on the services side; the route numbers count on with every route ever planned (`RTE-5001` only on the very first).
+
+[[release]]
+== 1. The release, and the routing tables
+
+On the services side, the routing service runs the area: `argocd app sync routing`. On the modulith, the modulith does: `argocd app sync logistics-app`. Either one migrates the same tables.
+
+[source,bash]
+----
+argocd app sync routing
+argocd app wait routing --health --timeout 300
+kubectl -n ff-logistics get pods -l app.kubernetes.io/name=routing
+PSQL="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c"
+$PSQL "select version, description from routing_flyway_history order by installed_rank"
+----
+
+✅ Two new pods `Running`, and the area at version 2:
+
+----
+ version |  description
+---------+----------------
+ 1       | routing begins
+ 2       | routing tables
+----
+
+While the Rollout replaces the pods, the old one may show `Error` for a few seconds. Kubernetes stops it with SIGTERM, and a JVM stopped by a signal exits with code 143 (128 + 15): not zero, so `kubectl` calls it an error. The pod is gone in the next listing.
+
+[[token]]
+== 2. A token, and two shortcuts
+
+[source,bash]
+----
+E=localhost:8081
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+----
+
+Routing is for dispatchers and tenant admins. `nexus.planner` is a tenant admin of `ff-eu-freight`, the tenant of the warehouse `IST-HDK` (xref:try-warehousing.adoc[Try it: a warehouse]).
+
+[[territory]]
+== 3. A territory around the warehouse
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/geo/territories -d '{"territoryCode":"IST-EU","name":"Istanbul Europe",
+  "hubGln":"8690001000011","centerLatitude":41.05,"centerLongitude":28.85,"coverageRadiusKm":35,
+  "activePointCount":420,"weeklyVisitTarget":840}' | jq '{territoryCode, workloadBalanceScore}'
+----
+
+✅ The hub is `IST-HDK` (its GLN), and the score says how evenly the work is spread:
+
+----
+{
+  "territoryCode": "IST-EU",
+  "workloadBalanceScore": 92.0
+}
+----
+
+70, plus the density (420 points over 35 km: 12, at most 20), plus the visit frequency (840 visits a week over 420 points, times 5: 10, at most 10).
+
+[[route]]
+== 4. A van's stops, in driving order
+
+Four stops, listed from Kadıköy in the east to Esenyurt in the west. The depot is in Hadımköy, further west still.
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/geo/routes -d '{"territoryCode":"IST-EU","vehiclePlate":"34 FF 0417",
+  "depotLatitude":41.10,"depotLongitude":28.65,"vehicleCapacityKg":3500,"averageSpeedKmh":40,"stops":[
+  {"stopCode":"IST-KDK","customerName":"Kadikoy Market","latitude":40.99,"longitude":29.03,"demandWeightKg":400,"serviceMinutes":15},
+  {"stopCode":"IST-BSK","customerName":"Besiktas Pharmacy","latitude":41.043,"longitude":29.007,"demandWeightKg":300,"serviceMinutes":15},
+  {"stopCode":"IST-BKY","customerName":"Bakirkoy Bakery","latitude":40.98,"longitude":28.87,"demandWeightKg":500,"serviceMinutes":15},
+  {"stopCode":"IST-ESN","customerName":"Esenyurt Depot Shop","latitude":41.03,"longitude":28.67,"demandWeightKg":200,"serviceMinutes":15}]}' \
+  | jq '{routeNumber, totalDistanceKm, totalMinutes, order: [.stops[].stopCode], arrivals: [.stops[].arrivalMinutes]}'
+----
+
+✅ The van drives them the other way round:
+
+----
+{
+  "routeNumber": "RTE-5001",
+  "totalDistanceKm": 56.17,
+  "totalMinutes": 146,
+  "order": ["IST-ESN", "IST-BKY", "IST-BSK", "IST-KDK"],
+  "arrivals": [15, 63, 104, 131]
+}
+----
+
+Nearest neighbour: from Hadımköy the closest stop is Esenyurt, from there Bakırköy, and so on eastward. An arrival is the drive from the stop before, after that stop's 15 minutes of service; `totalMinutes` ends when the service at the last stop does (131 + 15). These are the numbers the area's own tests expect (`RoutePlanApiTest`), from the same code.
+
+[[window]]
+== 5. A time window changes the order
+
+Kadıköy takes deliveries until minute 70 only.
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/geo/routes -d '{"territoryCode":"IST-EU","vehiclePlate":"34 FF 0418",
+  "depotLatitude":41.10,"depotLongitude":28.65,"vehicleCapacityKg":3500,"averageSpeedKmh":40,"stops":[
+  {"stopCode":"IST-ESN","customerName":"Esenyurt Depot Shop","latitude":41.03,"longitude":28.67,"demandWeightKg":200,"serviceMinutes":15},
+  {"stopCode":"IST-KDK","customerName":"Kadikoy Market","latitude":40.99,"longitude":29.03,"demandWeightKg":400,"serviceMinutes":15,
+   "readyMinutes":0,"dueMinutes":70}]}' \
+  | jq '{routeNumber, order: [.stops[].stopCode], arrivals: [.stops[].arrivalMinutes]}'
+----
+
+✅ Kadıköy first:
+
+----
+{
+  "routeNumber": "RTE-5002",
+  "order": ["IST-KDK", "IST-ESN"],
+  "arrivals": [64, 136]
+}
+----
+
+Nearest first would reach Kadıköy at minute 87, after its window closed. With a window in the list, the planner hands the order to Timefold: on time first, then short. The longer drive is the right answer: distance only chooses among the orders that are on time.
+
+[[refused]]
+== 6. A window no order can meet
+
+The same request with `"dueMinutes":20`: Kadıköy cannot be reached by then from Hadımköy, whichever stop comes first.
+
+✅ `400`, with the detail `No order of the stops keeps every stop inside its time window`. Nothing is stored, and no route number is used up: a plan is numbered last. (This answer is the area's test, `refusesWindowsNoOrderCanMeet`; it was not part of the first run.)
+
+[[modulith]]
+== On the modulith
+
+The same core runs in the modulith: switch (xref:switching.adoc[Switching sides]), then steps 2 to 5 against the same edge. The territory is already there (the same tables), and the route numbers count on from the same sequence.
+
+Next in S5, routing starts to talk to the other areas: transportation asks it for a leg's road distance (flow 1), and a completed route stop delivers a shipment (flow 3).

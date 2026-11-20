@@ -317,3 +317,28 @@ Then `argocd app sync logistics-app`: its migration Job creates transportation's
 === Run it, switch, run it again
 
 The steps, with what to expect: xref:try-shipment.adoc[Try it: a shipment to a warehouse].
+
+[[s5]]
+== S5: routing, on its own first
+
+What exists: the routing area, ported from the reference's `geo` package. Territories around a hub, and route plans that put a van's stops in driving order: nearest neighbour for a few stops, Timefold for longer lists and time windows, over a road matrix (the straight line times 1.24, or OSRM when one is configured). What it shows: a third area served the same way on both sides, with nothing new in either implementation but its settings. Flows 1 and 3, routing talking to transportation, come next in this sprint.
+
+[mermaid]
+....
+flowchart LR
+  R["routing core<br/>territories, route plans"] --> P{"time window, or<br/>more than 8 stops?"}
+  P -->|no| N["nearest neighbour"]
+  P -->|yes| T["Timefold<br/>on time first, then short"]
+  N --> M["road matrix<br/>straight line x 1.24, or OSRM"]
+  T --> M
+....
+
+=== Delivering it
+
+*base* (Timefold's version in the BOM), then *shared* (the core), then *modulith* and *services* (the settings, and the validator the routing service lacked), then *runtime* and *docs*. Each repository was shipped with the helper in xref:delivery.adoc#ship[the Delivery page], which waits for each merge's own run before the next repository starts.
+
+Only the routing service's and the modulith's folders changed, so only their images were published. On the services side: `argocd app sync routing`.
+
+=== Run it
+
+The steps, with what to expect: xref:try-route.adoc[Try it: a route].

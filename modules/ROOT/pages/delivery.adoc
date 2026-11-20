@@ -237,6 +237,42 @@ gh pr list                               # open pull requests
 `-R ffetih/ff-logistic-<repository>` points any of them at another repository, without `cd`.
 That works for `run`, `workflow` and `pr merge`; `pr create --fill` still needs to run inside the repository.
 
+[[ship]]
+=== Several repositories in order: ship
+
+A sprint that touches several repositories is merged in the order its dependencies build (xref:#order[below]). A pull request's CI clones the libraries it builds on from their `main` (xref:decisions.adoc#d11[decision 11]): shared's checks are only green once base's change is *merged*. So each repository waits for the one before it.
+
+The helper does the loop above for one repository, and returns only when its merge has been built on `main`:
+
+[source,bash]
+----
+ship() {
+  git push -q -u origin sprint/s05 && gh pr create --base main --head sprint/s05 --fill \
+  && sleep 10 && gh pr checks --watch && gh pr merge --merge || return 1
+  sha=$(gh pr view sprint/s05 --json mergeCommit -q .mergeCommit.oid)
+  echo "waiting for main's run of ${sha:0:7} ..."
+  for i in $(seq 1 30); do
+    id=$(gh run list --commit "$sha" --limit 1 --json databaseId -q '.[0].databaseId')
+    [ -n "$id" ] && break; sleep 5
+  done
+  [ -z "$id" ] && { echo "no run for ${sha:0:7} (this repo may publish nothing on main)"; return 0; }
+  gh run watch "$id" --exit-status
+}
+----
+
+Then the whole sprint, one repository after the other; the chain stops at the first red step, and nothing after it is merged:
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic
+(cd base && ship) && (cd shared && ship) && (cd modulith && ship) \
+  && (cd services && ship) && (cd runtime && ship) && (cd docs && ship)
+----
+
+Why the run of the *merge commit*, and not simply the latest run on `main`: right after a merge, GitHub has not created the new run yet (xref:#a-moment[a run needs a moment]). "The latest run" is then the previous one, already finished; the helper would return at once, and shared would start before base is on `main`. `gh run list --commit` waits for the run that belongs to this merge.
+
+Shipped this way first in S5. The next step would move the chain into GitHub itself: a workflow that ships a sprint branch through all repositories in order (a release train), and PR builds that clone a library's branch of the same name when it exists, so a sprint's pull requests can all go green at once.
+
 [[site]]
 == The documentation site: a fourth station
 
