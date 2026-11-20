@@ -180,27 +180,30 @@ Goal: the first business area on both sides from one core. The walkthrough's war
 - [x] **S03-05 One walkthrough, two implementations** · docs
   The warehouse walkthrough against the edge; run it, switch, run it again: same answers, same rows.
 
-## S4 — Transportation and the flows between areas
+## S4 — Transportation, and the first flow between areas
 
-Goal: the comparison becomes real. In the reference, the areas hardly talk to each other; here they do, through ports (decision 7):
+Goal: the comparison becomes real: one area tells another something, in-process on one side, over Kafka on the other, from the same cores.
 
-| Flow | Kind | Modulith | Services |
-| :--- | :--- | :--- | :--- |
-| Transportation asks routing for a leg's road distance | query | method call | HTTP with timeout and a haversine fallback |
-| A shipment delivered to a warehouse opens its receiving at warehousing | event | Modulith event | Kafka, outbox |
-| A completed route stop with e-POD delivers the shipment | event | Modulith event | Kafka, outbox |
+Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routing, which arrives in S5; they move there. S4 builds flow 2 completely, and with it everything the other two need: the outbox on both sides, Kafka, an idempotent consumer, a dead-letter topic.
 
-- [ ] **S04-01 Port the transportation core with its ports** · shared
-  Shipments, legs, the lifecycle, the footprint; the ports `DistanceLookup` and the events `ShipmentProgressed`, `ShipmentDelivered`.
-  Port: `…/logistics/tms`.
-- [ ] **S04-02 Wire the flows in-process** · modulith
-  Adapters as Spring beans and `@ApplicationModuleListener`s; the Modulith event registry.
-- [ ] **S04-03 Wire the flows over the network** · services
-  An HTTP client adapter with timeouts and fallback; Kafka for events through the Spring Modulith event registry as outbox; consumers that are idempotent and order by `occurredAt`; a dead-letter topic per consumer. Open question to settle first: the three services share one database, and the registry's `event_publication` table would be shared too; each service's resubmission must see only its own publications (a table or schema per service).
-- [ ] **S04-04 One shipment through both** · docs
-  The walkthrough from booking to delivery, with a sequence diagram per side.
-- [ ] **S04-05 First failure drills** · docs
-  Stop routing on the services side: what does booking do? Stop Kafka on each side: what is lost, what waits? Written down with the observed behaviour.
+- [x] **S04-00 Housekeeping** · docs
+  The site's menu in sections (Learn, Reference, Operate); in the Delivery page, wait a few seconds before watching a run, and let GitHub merge a pull request once its checks pass (auto-merge, a required check), set up by hand in each repository.
+- [x] **S04-01 Keep each process's outbox in a schema of its own** · base
+  `ff-base-events`: the registry's table migrated as the area `outbox` in the process's schema (`ff.events.schema`), unfinished events published again from one pod at a time with a doubling wait, completed ones deleted; `MigrationArea` may name a schema. Decision 12.
+  Port: `…/logistics/outbox` of the reference, from the application into a library.
+- [x] **S04-02 Port the transportation core** · shared
+  Shipments, legs, the lifecycle, the footprint; `ShipmentProgressed` and `ShipmentDelivered` as the area's API; a destination's GLN, which the delivery event carries with the pallet's SSCC and weight. One script for the reference's four. The e-CMR document links come with S5's documents.
+  Port: `…/logistics/tms`, `V4`–`V7__tms_*.sql`.
+- [x] **S04-03 Open an inbound arrival when a shipment reaches a warehouse** · shared
+  Warehousing's half of flow 2, in its own words: `InboundArrivals.open(ShipmentArrival)`, idempotent by shipment, in the shipment's tenant, without a request; `GET /api/v1/wms/arrivals`.
+- [x] **S04-04 Wire the flow in-process** · modulith
+  The `flows` module: a listener on `ShipmentDelivered` after the commit, through the outbox in the schema `modulith`. Spring Modulith checks that it uses both areas through their APIs only.
+- [x] **S04-05 Wire the flow over Kafka** · services
+  Transportation sends its events to Kafka through its outbox (schema `transportation`), keyed by the shipment; warehousing reads them in the consumer group `warehousing`, into a type of its own, and opens the arrival; a message it cannot read goes to `….warehousing.dlt`, one that fails otherwise is tried twice first. Tested against a broker in the test JVM.
+- [x] **S04-06 One shipment through both** · docs
+  A "Try it" page, from booking to the arrival at the dock, on each side; the walkthrough's S4.
+- [ ] **S04-07 First failure drills** · docs
+  On the services side: stop the warehousing service, deliver, start it again; stop Kafka, deliver, start it again. On the modulith: what is there to stop? Written down with what was observed.
 
 ## S5 — Routing and documents
 
@@ -208,7 +211,11 @@ Goal: the comparison becomes real. In the reference, the areas hardly talk to ea
   Territories, route plans, time windows; Timefold over a road matrix (OSRM, haversine fallback).
   Port: `…/logistics/geo`.
 - [ ] **S05-02 Run routing on both sides** · modulith, services
-- [ ] **S05-03 Add document links** · shared, modulith, services, runtime
+- [ ] **S05-03 Ask routing for a leg's road distance** · shared, modulith, services
+  Flow 1: transportation's port `DistanceLookup`; a method call in the modulith, HTTP with a timeout and a haversine fallback on the services side.
+- [ ] **S05-04 Deliver a shipment from a completed route stop** · shared, modulith, services
+  Flow 3: routing's event, through the outbox; in-process in the modulith, over Kafka on the services side, with the consumer and dead-letter topic of S04-05.
+- [ ] **S05-05 Add document links** · shared, modulith, services, runtime
   Presigned, write-once RustFS links: e-CMR in transportation, e-POD in routing; the storage settings on both sides.
   Port: `base/ff-base-storage` use from S7 of the reference.
 

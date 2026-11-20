@@ -290,3 +290,30 @@ PreSync migrates warehousing to version 3. Then one pod of four runs the new ver
 === Run it, switch, run it again
 
 The steps, one command block at a time, each with the answer to expect (recorded on the first run): xref:try-warehousing.adoc[Try it: a warehouse, step by step].
+
+[[s4]]
+== S4: a shipment that tells the warehouse
+
+What exists: transportation, and the first flow between two areas. A shipment delivered to a warehouse opens an inbound arrival at its dock: in the modulith through an in-process event, on the services side through Kafka; both through an outbox, the same library, each in a schema of its own (xref:decisions.adoc#d12[decision 12]). What it shows: the same business result from both, and where the two ways differ (xref:architecture.adoc#flow-2[flow 2, on each side]).
+
+[mermaid]
+....
+flowchart LR
+  subgraph shared["written once"]
+    T["transportation<br/>publishes ShipmentDelivered"]
+    W["warehousing<br/>InboundArrivals.open(ShipmentArrival)"]
+    O["ff-base-events<br/>the outbox"]
+  end
+  T -->|"modulith: flows listener, same JVM"| W
+  T -->|"services: Kafka, consumer group warehousing"| W
+....
+
+=== Delivering it
+
+*base* first (ff-base-events), then *shared*, then *modulith* and *services*, then *docs* (xref:delivery.adoc#order[the order]). The modulith's and the transportation and warehousing services' merges change their folders, so their pushes publish new images; routing and the gateway keep theirs.
+
+Then `argocd app sync logistics-app`: its migration Job creates transportation's tables, the inbound arrivals and the schema `modulith` with its outbox, and the Rollout goes through the canary.
+
+=== Run it, switch, run it again
+
+The steps, with what to expect: xref:try-shipment.adoc[Try it: a shipment to a warehouse].

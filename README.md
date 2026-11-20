@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S3, the first business area**. Warehousing (warehouses, ASNs, receiving into SSCC-labelled pallets) runs on either implementation behind the same edge, from one core; CI publishes every image and both sides release by canary. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
+> Status: **S4, the first flow between areas**. A shipment delivered to a warehouse opens an inbound arrival there: through an in-process event in the modulith, through Kafka between the services, both through an outbox in each process's own schema. Warehousing and transportation run on either side from one core each. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
 
 ---
 
