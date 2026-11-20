@@ -226,3 +226,137 @@ A values change builds no image (its folder did not change); the new pods are a 
 === After a change in base or shared
 
 The applications do not see it until their images are built again: in ff-logistic-modulith (and ff-logistic-services) on GitHub, *Actions*, *CI*, *Run workflow*. That run builds on the libraries' latest main and publishes every image (xref:decisions.adoc#d11[decision 11]).
+
+[[s3]]
+== S3: a warehouse, on either side
+
+What exists: the first business area, warehousing, written once in ff-logistic-shared and served by the modulith or by the warehousing service. What it shows: the same requests give the same answers and write the same rows, whichever side is active.
+
+[mermaid]
+....
+flowchart LR
+  subgraph shared["ff-logistic-shared: written once"]
+    STD["ff-domain-standards<br/>GS1, ISO 6346, emissions"]
+    WH["ff-domain-warehousing<br/>api, domain, service,<br/>db/migration/warehousing"]
+    STD --> WH
+  end
+  WH --> M["modulith<br/>logistics-app"]
+  WH --> S["warehousing service<br/>behind the gateway"]
+  M & S --> DB[("ff_logistics<br/>wms_* tables")]
+....
+
+In S3 the two sides really are the same: warehousing talks to no other area yet, so both only *include* the jar. The differences start in S4, when areas call each other.
+
+=== The receiving story
+
+A supplier announces a delivery (an ASN: advance shipping notice). When the goods arrive, they are built into pallets; each pallet gets an SSCC, the 18-digit GS1 number printed on its label, and is put away into a bin.
+
+[mermaid]
+....
+sequenceDiagram
+  participant C as curl
+  participant W as warehousing<br/>(modulith or service)
+  participant D as ff_logistics
+  C->>W: POST /api/v1/wms/warehouses (GLN, GS1 company prefix)
+  W->>D: wms_warehouses
+  C->>W: POST /api/v1/wms/warehouses/{id}/bins
+  W->>D: wms_bin_locations
+  C->>W: POST /api/v1/wms/asns (lines: GTIN, quantity)
+  W->>D: wms_asns, wms_asn_lines (EXPECTED)
+  C->>W: POST /api/v1/wms/asns/{id}/pallets (GTIN, quantity, bin)
+  W->>D: next value of wms_sscc_serial_seq
+  W->>D: wms_pallets (SSCC), the line's received quantity, the ASN's status
+  W-->>C: {"sscc": "08690001…", "asnStatus": "RECEIVING"}
+....
+
+=== Delivering it
+
+The order of xref:delivery.adoc#order[a sprint's delivery]: *shared* first, then *modulith* and *services*. Their merges change the applications' folders, so the push runs publish new images, built on shared's new main; no *Run workflow* is needed. Merged the other way round, the images would be built on the old cores.
+
+=== After the merge: the first real canary
+
+The S3 images are new versions of running applications, so this is the first sync that goes through the canary steps (S2's first sync created the Rollout, and a new Rollout starts at 100 %).
+
+[source,bash]
+----
+argocd app sync logistics-app
+kubectl argo rollouts get rollout logistics-app -n ff-logistics --watch
+----
+
+PreSync migrates warehousing to version 3. Then one pod of four runs the new version (25 %), the analysis asks its release health three times, the Rollout goes to 50 %, waits 30 seconds, and finishes at 100 %.
+
+=== Run it on the modulith
+
+`jq` picks fields out of the answers (`sudo apt install -y jq` if it is missing). `nexus.planner` is a warehouse operator of the tenant `ff-eu-freight`.
+
+[source,bash]
+----
+E=localhost:8081
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+
+# A warehouse: its GLN starts with the company's GS1 prefix and ends with a check digit
+WH=$(curl -s "${H[@]}" $E/api/v1/wms/warehouses -d '{"code":"IST-HDK","name":"Istanbul Hadimkoy Hub",
+  "gln":"8690001000011","gs1CompanyPrefix":"8690001","countryCode":"TR","city":"Istanbul",
+  "latitude":41.1025,"longitude":28.6512,"palletCapacity":12000}' | jq -r .id)
+
+curl -s "${H[@]}" $E/api/v1/wms/warehouses/$WH/bins -d '{"code":"A-01-01","kind":"RACK","palletCapacity":4}'
+
+# The supplier's ASN: one line, 120 units of one GTIN
+ASN=$(curl -s "${H[@]}" $E/api/v1/wms/asns -d '{"asnNumber":"ASN-2026-0001","warehouseId":"'$WH'",
+  "supplierName":"Anatolia Textiles","expectedArrival":"2026-11-25",
+  "lines":[{"gtin":"8690001100018","skuCode":"TSHIRT-M-BLUE","quantity":120}]}' | jq -r .id)
+
+# The first pallet: 60 of the 120
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN/pallets \
+  -d '{"gtin":"8690001100018","quantity":60,"grossWeightKg":180.5,"binCode":"A-01-01"}' | jq '{sscc, asnStatus, binCode}'
+----
+
+----
+{
+  "sscc": "086900010001000010",
+  "asnStatus": "RECEIVING",
+  "binCode": "A-01-01"
+}
+----
+
+The SSCC: the extension digit `0`, the company prefix `8690001`, the serial `000100001` (the first value of the database sequence `wms_sscc_serial_seq`, padded to nine digits) and the GS1 check digit `0`. A second pallet in the same database gets serial `000100002`, whichever side takes it.
+
+What a scanner asks when it reads that label:
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/pallets/<the sscc> | jq '{asnNumber, skuCode, quantity, binCode}'
+----
+
+The rules answer too: the same ASN number again is a `409`, a GLN with a wrong check digit or a pallet of a GTIN not on the ASN is a `400` with a problem detail, a full bin is a `409`, and another tenant's token sees none of it (an empty list, and `404` for one by its id).
+
+=== Switch, and ask again
+
+Switch to the services as in S1 (`active: services`, push, refresh the ApplicationSet, sync the services and the edge). Then, with the same `TOKEN`, `WH` and `ASN`:
+
+[source,bash]
+----
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN | jq '{asnNumber, status, lines}'       # the same ASN, RECEIVING
+curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN/pallets \
+  -d '{"gtin":"8690001100018","quantity":60,"grossWeightKg":180.5,"binCode":"A-01-01"}' | jq '{sscc, asnStatus}'
+----
+
+The second pallet gets the next serial from the same sequence (`086900010001000027`) and receives the rest of the line: the ASN is now `RECEIVED`. The service continued exactly where the modulith stopped, because both read and write the same rows.
+
+=== What the database says
+
+[source,bash]
+----
+kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c \
+  "select p.sscc, p.quantity, a.asn_number, a.status, p.created_at
+   from wms_pallets p join wms_asns a on a.id = p.asn_id order by p.created_at"
+kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c \
+  "select version, description, installed_on from warehousing_flyway_history order by installed_rank"
+----
+
+* Two pallets, two consecutive serials, one written by each side.
+* The history: version 0 (the baseline from S1), 1, and then 2 and 3 from the modulith's migration Job. The warehousing service's Job found version 3 and added nothing.
+
+Switch back to `active: modulith` the same way.
