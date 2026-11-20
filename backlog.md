@@ -126,6 +126,8 @@ Goal: an empty application on each side, reached through the same edge, switched
   Done when: the Job succeeds after a switch in each direction, and fails when the edge has nothing behind it.
 - [x] **S01-10 Describe the switch** · docs, runtime
   The walkthrough page, the runtime page's switch section, and `tools/build-local-images.sh`, which builds and imports every image from the sibling folders until CI does (S2).
+- [x] **S01-11 Write down what the first run taught** · docs
+  The walkthrough gains the picture to keep in mind (a railway junction), how to read a sync in three questions, what WSL needs before the first build (its own JDK 25 and git identity), why the switch takes one to three minutes and how not to wait, how to read the latest smoke test only, and the history tables as the first run left them, baseline rows explained.
 
 ## S2 — CI, images and progressive delivery
 
