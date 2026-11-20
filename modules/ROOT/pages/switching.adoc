@@ -56,7 +56,7 @@ git diff                      # -active: modulith  +active: services
 git commit -am "Switch to the services" && git push
 ----
 
-Nothing in the cluster has changed yet. `curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info` still answers `200`: the modulith.
+Nothing in the cluster has changed yet. `+curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info+` still answers `200`: the modulith.
 
 === 2. The signalman reads Git
 
