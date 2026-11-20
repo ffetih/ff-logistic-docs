@@ -190,6 +190,7 @@ argocd app list -l ff-logistic/implementation=services
 [source,bash]
 ----
 argocd app sync -l ff-logistic/implementation=services
+argocd app wait -l ff-logistic/implementation=services --health --timeout 300
 argocd app sync edge
 ----
 
@@ -264,9 +265,13 @@ cd /mnt/d/dev/workspace/ff-logistic/runtime
 sed -i 's/^active: .*/active: modulith/' deploy/implementation.yaml
 git commit -am "Switch to the modulith" && git push
 kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+until argocd app get logistics-app > /dev/null 2>&1; do sleep 5; done
 argocd app sync logistics-app
+argocd app wait logistics-app --health --timeout 300
 argocd app sync edge
 curl -s "${H[@]}" $E/api/v1/wms/asns/$ASN | jq '{status}'
 ----
+
+The edge last, once the modulith is healthy: xref:switching.adoc#order-matters[the order matters].
 
 ✅ `"status": "RECEIVED"`: the modulith sees what the service wrote.

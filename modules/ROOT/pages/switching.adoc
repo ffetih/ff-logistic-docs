@@ -96,6 +96,7 @@ argocd app list -l ff-logistic/implementation=services
 [source,bash]
 ----
 argocd app sync -l ff-logistic/implementation=services
+argocd app wait -l ff-logistic/implementation=services --health --timeout 300
 ----
 
 Each sync runs the same three phases (xref:walkthrough.adoc#reading-a-sync[reading a sync]); in the Argo CD UI, on `warehousing`:
@@ -177,18 +178,61 @@ The first pallet from the modulith, the second from the warehousing service; con
 [[back]]
 == Back again
 
-The same, the other way round:
+The same, the other way round. One line at a time: each waits for what the one before set in motion.
 
 [source,bash]
 ----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
 sed -i 's/^active: .*/active: modulith/' deploy/implementation.yaml
 git commit -am "Switch to the modulith" && git push
 kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
-argocd app sync logistics-app      # once it is listed
+until argocd app get logistics-app > /dev/null 2>&1; do sleep 5; done        # until the Application exists
+argocd app sync logistics-app
+argocd app wait logistics-app --health --timeout 300                          # until its pods are ready
 argocd app sync edge
 ----
 
 `logistics-app` comes back as a new Application: `Missing` and `OutOfSync`, then, after the sync, `Healthy` and `Synced`; its Rollout is new again, so it starts at 100 % without a canary.
+
+[[order-matters]]
+=== The order matters: the edge last
+
+The edge's smoke test checks *who answers*. Synced before the side behind it is healthy, it finds nobody and fails. The first way back, on 2026-11-20, ended like this in the Argo CD list:
+
+[cols="1,2,3",options="header"]
+|===
+| Application | State | Meaning
+
+| `logistics-app` | `Missing`, `OutOfSync` | Generated again by the ApplicationSet, never synced: no pods.
+| `edge` | `Healthy`, `Synced`, *Sync failed* | Its Service is fine; its last smoke test found no pod behind it.
+|===
+
+The cause: `argocd app sync logistics-app` ran right after the refresh, before the ApplicationSet had created the Application, and Argo CD answers a sync of an Application that does not exist with `permission denied` (xref:walkthrough.adoc#s1[as in S1]). The edge's sync, the next line, then ran with nothing behind it.
+
+The repair is the missing steps, in order: `argocd app sync logistics-app`, `argocd app wait logistics-app --health`, `argocd app sync edge`. Nothing was lost: the data is in the database, and the edge's failed sync only means its last check failed; the next one passes.
+
+[[diagnose]]
+=== When a switch does not come back: what to look at
+
+[source,bash]
+----
+argocd app list                                                     # which side's Applications exist, and their state
+argocd app get logistics-app | sed -n '1,25p'                       # Sync Status, Health Status, Message
+kubectl -n ff-logistics get pods | grep -v Completed                # CrashLoopBackOff, ImagePullBackOff, Pending?
+kubectl -n ff-logistics get jobs --sort-by=.metadata.creationTimestamp | tail -6
+kubectl -n ff-logistics logs job/<a failed job> --tail=40           # a migration or smoke test that failed
+----
+
+[cols="2,3",options="header"]
+|===
+| What you see | What it means
+
+| The side's Applications `Missing`, `OutOfSync` | Generated, not synced yet: sync them.
+| `permission denied` on a sync | The Application does not exist yet: wait for the ApplicationSet, or refresh it.
+| edge `Sync failed` | Nothing answered its smoke test: is the side behind it healthy? Sync it first, then the edge again.
+| A migration Job `Failed` | Its log names the script; nothing else of the sync ran.
+| Pods in `ImagePullBackOff` | The image's package is private, or its tag does not exist (xref:delivery.adoc#packages[packages]).
+|===
 
 [[costs]]
 == What it costs, and why it is built this way
