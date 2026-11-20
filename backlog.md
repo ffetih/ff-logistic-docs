@@ -207,10 +207,11 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
 
 ## S5 — Routing and documents
 
-- [ ] **S05-01 Port the routing core** · shared
-  Territories, route plans, time windows; Timefold over a road matrix (OSRM, haversine fallback).
+- [x] **S05-01 Port the routing core** · shared, base
+  Territories, route plans, time windows; Timefold over a road matrix (OSRM, haversine fallback). The reference's `geo` package as `routing`, its `routing` subpackage as `planning`; the settings under `ff.routing`; paths (`/api/v1/geo`) and tables (`geo_*`) as before. Two scripts in one; the proof of delivery waits for S05-05. Timefold's version in the base BOM.
   Port: `…/logistics/geo`.
-- [ ] **S05-02 Run routing on both sides** · modulith, services
+- [x] **S05-02 Run routing on both sides** · modulith, services
+  The same settings on both sides, the straight-line estimate by default (no OSRM in the cluster); the routing service gets the validator the area's requests need. Each side checks that it serves the area.
 - [ ] **S05-03 Ask routing for a leg's road distance** · shared, modulith, services
   Flow 1: transportation's port `DistanceLookup`; a method call in the modulith, HTTP with a timeout and a haversine fallback on the services side.
 - [ ] **S05-04 Deliver a shipment from a completed route stop** · shared, modulith, services
