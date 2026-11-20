@@ -176,3 +176,53 @@ After the modulith, then the services, the first run gave:
 * `routing` came first (areas run in name order) into a database with none of their tables: no baseline. `transportation` and `warehousing` arrived next to it and first recorded a baseline, version 0 (xref:decisions.adoc#d3[decision 3]).
 
 Switch back to `active: modulith` the same way; nothing is migrated twice.
+
+[[s2]]
+== S2: from a commit to a canary
+
+What exists: CI in every repository, images on GHCR, both sides released by canary with analysis. No image is built by hand any more.
+
+[mermaid]
+....
+flowchart LR
+  P["push to main<br/>modulith or services"] --> B["CI: build<br/>base + shared from main,<br/>then this repository, with tests"]
+  B --> I["CI: publish<br/>changed images to GHCR"]
+  I --> T["CI: commit the tag<br/>deploy/apps/name/image-local.yaml<br/>[skip ci]"]
+  T --> O["Argo CD:<br/>the Application is OutOfSync"]
+  O --> S["sync: migrate, then the canary<br/>25 %, analysis, 50 %, 100 %"]
+  S --> K["smoke test"]
+....
+
+=== Once: the first images
+
+A push doesn't publish a repository's first images: the merge that brings CI in changes `ci.yml`, not an image's folder, so its publish job keeps an image that doesn't exist yet.
+Publish them once by hand, in ff-logistic-shared, ff-logistic-modulith and ff-logistic-services: *Actions*, *CI*, *Run workflow* on `main` (or `gh workflow run ci.yml --ref main` inside the repository).
+Each run creates its packages on GHCR, private, as every new package is.
+The cluster pulls without credentials, so make each public once: GitHub, your profile, *Packages*, the package, *Package settings*, *Change visibility*: `identity`, `logistics-app`, `warehousing`, `transportation`, `routing`, `gateway`.
+
+How CI, Maven and the packages fit together, the `gh` commands, and what went wrong the first time: xref:delivery.adoc[Delivery].
+
+=== Once: from a Deployment to a Rollout
+
+The canary turns each application's `Deployment` into an Argo Rollouts `Rollout`. A plain sync creates the Rollout and leaves the old Deployment running beside it, and both carry the edge label: sync this first time with `--prune`.
+
+[source,bash]
+----
+argocd app sync logistics-app --prune
+kubectl argo rollouts get rollout logistics-app -n ff-logistics --watch   # or the Argo CD UI
+----
+
+=== A canary that aborts
+
+[source,bash]
+----
+# in ff-logistic-modulith: deploy/apps/logistics-app/values-local.yaml, FF_RELEASE_HEALTHY "false"
+git commit -am "Break the release on purpose" && git push
+argocd app sync logistics-app
+----
+
+A values change builds no image (its folder did not change); the new pods are a new revision all the same. The first canary pod answers `DOWN` on `/actuator/health/release`, the analysis fails three times, and the Rollout aborts: the four old pods keep serving, and the edge never sends more than one pod's share to the broken one. Revert the commit and sync to recover.
+
+=== After a change in base or shared
+
+The applications do not see it until their images are built again: in ff-logistic-modulith (and ff-logistic-services) on GitHub, *Actions*, *CI*, *Run workflow*. That run builds on the libraries' latest main and publishes every image (xref:decisions.adoc#d11[decision 11]).

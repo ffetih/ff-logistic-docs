@@ -1,0 +1,329 @@
+= Delivery: from a commit to an image
+:description: How Maven, CI and GHCR fit together across six repositories, how to drive them from the terminal with gh, and what went wrong the first time.
+
+The walkthrough shows *what to do* in S2 (xref:walkthrough.adoc#s2[S2: from a commit to a canary]).
+This page explains *how the pieces fit*, and it records what went wrong on the first run and why.
+
+[[picture]]
+== The picture to keep in mind
+
+Think of a small factory with three stations and a truck:
+
+* *The workbench* is Maven. It turns source code into jars, the same way on your laptop and on a runner (`./build.sh`).
+* *The conveyor* is CI (GitHub Actions). On every push it carries the code over the workbench, and on `main` it carries the result on to the warehouse.
+* *The warehouse* is GHCR (GitHub Container Registry). It holds the images, labelled by commit.
+* *The truck* is Argo CD. It brings an image from the warehouse into the cluster, but only when you say so (sync).
+
+[mermaid]
+....
+flowchart LR
+  subgraph laptop["your laptop"]
+    C["git push"]
+  end
+  subgraph gh["GitHub"]
+    direction LR
+    B["CI: build<br/>Maven, tests"] --> P["CI: publish<br/>docker build, push"]
+    P --> T["CI: commit the tag<br/>image-local.yaml"]
+    P --> R[("GHCR<br/>ghcr.io/ffetih/…")]
+  end
+  subgraph k3d["k3d cluster"]
+    A["Argo CD sync"] --> K["pods"]
+  end
+  C --> B
+  T -.->|OutOfSync| A
+  R -.->|image pull| K
+....
+
+The split into six repositories is what makes this harder than in one repository.
+In one repository, everything a build needs sits in the same checkout.
+Here, everything one repository needs from another has to *travel*: as source (cloned next to it) or as a package (from a registry).
+We let source travel (xref:decisions.adoc#d11[decision 11]).
+
+[[maven]]
+== Maven: the workbench
+
+Every Java repository builds with the same command, locally and in CI:
+
+[source,bash]
+----
+./build.sh                # = ./mvnw -B install, with the tests
+./build.sh -DskipTests    # without them
+----
+
+* `mvnw` is the *Maven Wrapper*. Maven isn't installed anywhere: on first use, the wrapper downloads the version named in `.mvn/wrapper/maven-wrapper.properties` into `~/.m2/wrapper`. Every machine builds with the same Maven.
+* `install` puts the jars into the local repository `~/.m2/repository`. That folder is how one repository's build finds another's jars: there is no registry in between.
+
+So the order matters. A repository can only build once what it builds on has been installed:
+
+[mermaid]
+....
+flowchart LR
+  base["base<br/>ff-base-*"] --> shared["shared<br/>domain cores, identity"]
+  shared --> modulith["modulith<br/>logistics-app"]
+  shared --> services["services<br/>3 contexts, gateway"]
+  runtime["runtime<br/>realm file"] -.->|read by a test| shared
+....
+
+Locally, that order is your job (`tools/build-local-images.sh` follows it).
+In CI, each repository says what it builds on, and the build workflow clones and installs those first.
+
+[[ci]]
+== CI: the conveyor
+
+=== One workflow, written once
+
+Each repository has a short `.github/workflows/ci.yml`.
+It doesn't contain the steps: it *calls* two reusable workflows that live in ff-logistic-runtime.
+
+[source,yaml]
+----
+jobs:
+  build:
+    uses: ffetih/ff-logistic-runtime/.github/workflows/java-build.yml@main
+    with:
+      prebuild: base shared      # clone and install these first, in this order
+      siblings: runtime          # only cloned: a test reads files from it (shared only)
+  publish:
+    needs: build
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    uses: ffetih/ff-logistic-runtime/.github/workflows/java-publish.yml@main
+    with:
+      force: ${{ github.event_name == 'workflow_dispatch' }}
+      images: |
+        logistics-app logistics-app    # image name, folder with its Dockerfile
+----
+
+`@main` means "whatever runtime's main branch says *right now*".
+That's the plug and the socket: runtime is the socket in the wall, every `ci.yml` is a plug.
+
+IMPORTANT: When a change touches the reusable workflows (a new input, say), merge runtime first, then the repositories that use it.
+The other way round, GitHub rejects the caller's workflow before any job starts: a *Startup failure* with no logs.
+
+=== The build job
+
+Runs on every push and every pull request.
+
+. Check out this repository.
+. Set up JDK 25, and restore Maven's caches (`~/.m2/repository`, `~/.m2/wrapper`).
+. *Fetch Maven*, with up to four tries (one failed download used to fail the whole build).
+. *Clone* the `prebuild` and `siblings` repositories next to the checkout, under their short names: `../base`, `../shared`, `../runtime`. That's the same layout as `D:\dev\workspace\ff-logistic` on your disk.
+. *Build* the `prebuild` repositories, without their tests (their own CI runs those).
+. `./build.sh`: this repository, *with* its tests.
+. Upload the jars for the publish job.
+
+=== The publish job
+
+Runs only on `main`, never for a pull request.
+
+. Build each image from its folder's `Dockerfile`, tag it with the commit SHA, push it to GHCR.
+. Write that SHA into `deploy/apps/<name>/image-local.yaml` and commit it to `main` as `github-actions[bot]`, with `[skip ci]` so it doesn't start CI again.
+
+Argo CD then shows the Application *OutOfSync*: a new tag is waiting for a sync.
+
+=== Which images a run publishes
+
+A push only rebuilds the images whose folder (or the build files: `pom.xml`, `.mvn`, `mvnw`, `build.sh`) changed.
+A change to values or docs starts no rollout.
+
+[cols="2,3,3"]
+|===
+|Run started by |Publishes |Use it for
+
+|pull request
+|nothing (build and tests only)
+|checking a change before merging
+
+|push to `main`
+|only the images whose folder changed
+|everyday work
+
+|*Run workflow* (`workflow_dispatch`)
+|every image (`force: true`)
+|the first images of a repository; a change in base or shared, which this repository can't see
+|===
+
+When a push changes nothing an image is built from, the publish log says so and the job still succeeds:
+
+----
+identity: nothing under identity or the build files changed; keeping its image
+no image was published; nothing to record
+----
+
+[[packages]]
+== Packages: the warehouse
+
+* An image's name is `ghcr.io/ffetih/ff-logistic-<repository>/<name>:<commit SHA>`, for example `ghcr.io/ffetih/ff-logistic-shared/identity:a77ae96…`.
+* The first push of an image *creates* its package, linked to the repository that pushed it. The job's own token (`GITHUB_TOKEN`) is enough: no personal token is stored anywhere.
+* Every new package is *private*. The cluster pulls without a login, so each package is made public once: the package's page → *Package settings* → *Danger Zone* → *Change visibility* → *Public*.
+* The six packages: `ff-logistic-shared/identity`, `ff-logistic-modulith/logistics-app`, `ff-logistic-services/{warehousing,transportation,routing,gateway}`.
+
+Why images go to a registry and the jars don't:
+an image is pulled by the cluster, which needs it from somewhere outside the build.
+The jars are only needed *during* a build, which clones and builds them itself.
+A Maven registry (GitHub Packages, Nexus, JFrog) would ask every reader for a token, even for public packages (xref:decisions.adoc#d11[decision 11]).
+
+[[gh]]
+== Driving it from the terminal: gh
+
+Everything above can be done on github.com.
+The GitHub CLI `gh` does the same from WSL, which is quicker to repeat and easier to write down.
+
+=== Once: log in
+
+[source,bash]
+----
+gh auth login     # GitHub.com → HTTPS → Login with a web browser
+----
+
+`gh` prints a one-time code (`XXXX-XXXX`) in the terminal and opens github.com/login/device.
+You type that code into the browser, where you're already signed in, and authorize.
+The code ties the terminal and the browser together.
+That's why GitHub warns never to enter a code someone else sent you: whoever made the code gets the token.
+
+=== The loop for one repository
+
+Two rules:
+
+* Run the commands *inside the repository's folder*. `gh` reads the repository, the branch and the commit messages from the local git.
+* Run them *one at a time*. A pasted block runs every line, even after one has failed.
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/modulith
+git switch sprint/s02 && git status -sb             # everything pushed?
+
+gh pr create --base main --head sprint/s02 --fill   # open the PR; prints its link
+gh pr checks --watch                                 # wait for CI on the PR ("no checks reported": wait, retry)
+gh pr merge --merge                                  # merge; keep the sprint branch
+
+gh workflow run ci.yml --ref main                    # only when images must be published (see the table above)
+gh run watch                                         # pick the run, follow it live
+gh run rerun <run-id> --failed                       # re-run only the failed jobs, same inputs
+
+git switch main && git pull                          # bring the bot's tag commit home
+----
+
+Other useful ones:
+
+[source,bash]
+----
+gh run list --limit 5                    # the latest runs, with their event and result
+gh run view <run-id> --log-failed        # only the log of the failed steps
+gh pr list                               # open pull requests
+----
+
+`-R ffetih/ff-logistic-<repository>` points any of them at another repository, without `cd`.
+That works for `run`, `workflow` and `pr merge`; `pr create --fill` still needs to run inside the repository.
+
+[[site]]
+== The documentation site: a fourth station
+
+ff-logistic-docs has no Maven and no images.
+Its CI (`.github/workflows/pages.yml`) builds this site with Antora and publishes it on GitHub Pages: https://ffetih.github.io/ff-logistic-docs/.
+
+The site is put together from all six repositories: each one's `docs/` folder is a component (runtime, base, shared, modulith, services), and this repository adds the overview.
+So the job checks out all six side by side, the same layout as on your disk, and runs `./build.sh`.
+
+[mermaid]
+....
+flowchart LR
+  subgraph repos["six repositories, side by side"]
+    D["docs<br/>overview"]
+    O["runtime, base, shared,<br/>modulith, services<br/>each docs/ folder"]
+  end
+  repos --> B["Antora build<br/>warnings fail it"]
+  B --> P["GitHub Pages<br/>ffetih.github.io/ff-logistic-docs"]
+....
+
+[cols="2,3,3"]
+|===
+|Run started by |What it does |Why
+
+|pull request
+|builds the site, with every warning as a failure; publishes nothing
+|a broken link or a bad diagram is caught before it's merged
+
+|push to `main`
+|builds and publishes
+|everyday work
+
+|every night (02:17 UTC)
+|builds and publishes
+|picks up documentation changed in the other five repositories: they can't start this workflow themselves without a token
+
+|*Run workflow*
+|builds and publishes
+|to publish another repository's documentation change now, without waiting for the night
+|===
+
+The `gh` loop is the same as for the Java repositories, without the publish step:
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/docs
+git push -u origin sprint/s02                        # first push of a new branch
+gh pr create --base main --head sprint/s02 --fill
+gh pr checks --watch                                 # the site check on the PR
+gh pr merge --merge
+gh run watch                                         # the run on main: build, then deploy
+git switch main && git pull
+----
+
+To look at the site before pushing: `./build.sh`, then open `build/site/index.html`.
+It needs Node.js 22 and the other five repositories next to this one.
+
+To publish right after a documentation change in another repository: `gh workflow run pages.yml -R ffetih/ff-logistic-docs --ref main`.
+
+[[first-run]]
+== What went wrong the first time, and why
+
+Each of these happened during S2.
+None was a bug in the applications; each was something about the delivery itself, and each taught one rule.
+
+[cols="2,3,3",options="header"]
+|===
+|What we saw |Why |What we changed, the rule
+
+|*base*: the build failed before compiling anything, downloading Maven.
+|The Maven Wrapper downloads Maven from Maven Central on a runner's first use. One download failed, and with it the whole build. A re-run went green.
+|S02-10: the wrapper's download is cached between runs and fetched in its own step, with four tries. +
+*Rule*: a network fetch in CI gets a retry and a cache.
+
+|*shared*: `KeycloakRealmTest` failed with `deploy/platform/keycloak not found above /home/runner/work/…`.
+|The test checks that shared's identity code and runtime's Keycloak realm file still fit. It finds the file by walking *up* to a sibling `runtime` folder. On your disk the six repositories sit side by side; a runner only has the one it builds. Locally the test had always skipped itself (no Docker), so GitHub was the first place it ran.
+|S02-11: the build workflow clones `siblings` next to the checkout; shared declares `siblings: runtime`. +
+*Rule*: a cross-repository dependency the single repository hid becomes visible after a split; declare it.
+
+|*shared*, after merging: *Startup failure*, no logs, no job started.
+|shared's `ci.yml` passed `siblings`, but runtime's `main` didn't know that input yet: its PR had been merged before the S02-11 commit was pushed to the branch. A merged PR doesn't pick up later commits.
+|A new runtime PR with that commit, merged first. +
+*Rule*: socket before plug. Merge runtime's workflow change, then the callers. And push everything to a branch *before* merging its PR.
+
+|*shared*: CI green, but no image and no tag commit.
+|That was the push run of the merge. It only changed `ci.yml`, so change detection kept "its image", which didn't exist yet.
+|*Run workflow* on `main`. +
+*Rule*: a repository's first images come from *Run workflow*, not from a push.
+
+|*shared*: publish failed with `error from registry: denied`, after every layer was pushed.
+|GHCR refused to write the tag into the brand-new package the first time it was created. Re-running the failed job, unchanged, worked.
+|Nothing. +
+*Rule*: on a first publish, `denied` → `gh run rerun <id> --failed` once before looking further.
+
+|*modulith, services*: `gh workflow run` answered `HTTP 404`; `gh pr create` said `not a git repository`.
+|`ci.yml` wasn't on `main` yet (its PR wasn't merged), and `gh pr create --fill` was run from the parent folder, which isn't a repository. The other lines of the pasted block failed after it.
+|The loop above, one command at a time, inside the repository. +
+*Rule*: a workflow can only be run from a branch that has it.
+|===
+
+[[order]]
+== The order of a sprint's delivery
+
+When a sprint touches several repositories, merge in the order the dependencies run:
+
+. *runtime*, when the reusable workflows changed (the socket).
+. *base*, then *shared*: the libraries the applications build on.
+. *modulith* and *services*.
+. *Run workflow* where new images are needed; make new packages public.
+. Sync in Argo CD (xref:walkthrough.adoc#s2[walkthrough]).
+. *docs* last, describing what is now true; its merge publishes the site.
+. Tag the sprint on all six repositories.

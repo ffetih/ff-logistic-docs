@@ -78,3 +78,12 @@ Costs:: Diagrams render through Kroki, since Antora runs Asciidoctor.js, which c
 
 Problem:: The hub is read on GitHub as much as on the site.
 Decision:: The hub's diagrams are Mermaid, which GitHub renders in Markdown and Kroki renders in the site. The components may keep PlantUML, also through Kroki.
+
+[[d11]]
+== 11. CI: written once, the libraries built from source
+
+Problem:: Five repositories build Java the same way, and four of them build on base (and shared) that live in other repositories. Copying one workflow into each would drift; publishing the libraries to a Maven registry would need a token for every reader, even of public packages (GitHub Packages).
+Decision:: Two reusable workflows in ff-logistic-runtime, `java-build.yml` and `java-publish.yml`; each repository's `ci.yml` only names what it builds on and which images it publishes. The libraries are cloned from main and installed before the build, without their tests (their own CI runs those). An image is rebuilt only when its folder or the build files changed; its tag is committed to the same repository (xref:#d8[decision 8]).
+Costs:: A change in base or shared does not rebuild the applications by itself: their CI has a "Run workflow" button that publishes every image. Every build compiles the libraries again (about a minute). The libraries have no versions of their own: an application always builds on main.
+Considered:: GitHub Packages for the jars, with versions: right for libraries other teams depend on, a token in every clone here. A dispatch from base to the applications' CI: needs a personal access token stored as a secret in base.
+

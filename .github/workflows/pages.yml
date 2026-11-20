@@ -3,8 +3,9 @@
 # The playbook reads the repositories as sibling folders, so this job checks them out side by
 # side, the same layout as D:\dev\workspace\ff-logistic. All six are public: no token needed.
 #
-# Runs on a push to main here, by hand, and (from S2) when another repository's CI reports a
-# documentation change with a repository_dispatch of type docs-changed.
+# Runs on a push to main here, by hand, and every night, which picks up documentation changes
+# in the other repositories (they cannot start this workflow without a token of their own).
+# A pull request builds the site, with warnings as failures, and deploys nothing.
 #
 # Once, in this repository's settings: Pages > Source: GitHub Actions.
 name: Pages
@@ -12,9 +13,10 @@ name: Pages
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
-  repository_dispatch:
-    types: [docs-changed]
+  schedule:
+    - cron: '17 2 * * *'     # 02:17 UTC, 05:17 in Istanbul
 
 permissions:
   contents: read
@@ -22,8 +24,9 @@ permissions:
   id-token: write
 
 # One deployment at a time; a newer run waits instead of cancelling one that is publishing.
+# A pull request's check runs in a group of its own and does not wait for deployments.
 concurrency:
-  group: pages
+  group: ${{ github.event_name == 'pull_request' && format('pages-pr-{0}', github.ref) || 'pages' }}
   cancel-in-progress: false
 
 jobs:
@@ -62,11 +65,13 @@ jobs:
         working-directory: docs
         run: ./build.sh --log-failure-level=warn
       - uses: actions/upload-pages-artifact@v5
+        if: github.event_name != 'pull_request'
         with:
           path: docs/build/site
 
   deploy:
     needs: build
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

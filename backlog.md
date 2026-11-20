@@ -134,22 +134,33 @@ Goal: an empty application on each side, reached through the same edge, switched
 
 ## S2 — CI, images and progressive delivery
 
-Goal: no image built by hand. Every repository builds and tests in CI, publishes to GHCR and writes its own image tags.
+Goal: no image built by hand. Every repository builds and tests in CI, publishes to GHCR and writes its own image tags; both sides release by canary with analysis.
 
-- [ ] **S02-01 Build base in CI** · base
-  Build and test on every push and pull request; Testcontainers through Docker on the runner.
-- [ ] **S02-02 Build and publish shared** · shared
-  Checks out and installs base first, then builds the domain cores, identity and analytics loader; publishes `ghcr.io/ffetih/ff-logistic-shared/<app>`; commits the tag into `deploy/apps/<app>/image-local.yaml` of the same repository.
-  Port: `.github/workflows/ci.yml`.
-- [ ] **S02-03 Build and publish the modulith** · modulith
-  Installs base and shared's domain cores first, then the same publish-and-tag steps.
-- [ ] **S02-04 Build and publish the services** · services
-  A matrix over the three services and the gateway.
-- [ ] **S02-05 Release both sides by canary, with analysis** · modulith, services
-  The chart's Rollout and AnalysisTemplate (already in runtime) switched on for the modulith and for each service: four pods for the modulith (25 % steps are whole pods), two for each service.
-  Done when: a new image on each side goes through its steps and is promoted only after the analysis passes; a broken release health aborts it.
-- [ ] **S02-06 Make the images public and drop the pull secret** · all
-  New GHCR packages start private.
+- [x] **S02-01 Add the reusable build and publish workflows** · runtime
+  `java-build.yml`: clone and install what the repository builds on (base, shared) from main without their tests, then `./build.sh` with tests; upload the jars with their paths. `java-publish.yml`: build and push the images whose folder or build files changed (all with `force`), as `ghcr.io/ffetih/ff-logistic-<repo>/<name>:<sha>`, then commit the tags into the same repository's `deploy/apps/<name>/image-local.yaml` with `[skip ci]`, unless main has moved on (decision 11).
+  Port: `.github/workflows/ci.yml` of the reference.
+- [x] **S02-02 Render every application in CI** · runtime
+  `ci.yml`: check out shared, modulith and services next to runtime, `helm lint` and `helm template` every `deploy/apps/*` with the chart, every shape the chart can render, the edge chart, and every kustomization.
+  Done when: a broken values file in any repository fails runtime's CI on its next run.
+- [x] **S02-03 Build and test the base libraries in CI** · base
+- [x] **S02-04 Build shared in CI and publish the identity image** · shared
+- [x] **S02-05 Build the modulith in CI and publish its image** · modulith
+- [x] **S02-06 Build the services in CI and publish their images** · services
+  Four images: the three services and the gateway.
+- [x] **S02-07 Release both sides by canary, with analysis** · modulith, services
+  The modulith: four pods, 25 %, analysis of the release group, 50 %, a pause, 100 %. Each service: two pods, 50 %, analysis, 100 %.
+  Done when: a release broken on purpose (`FF_RELEASE_HEALTHY=false`) aborts at its first analysis on each side, and the old pods keep serving.
+- [x] **S02-08 Check the site on pull requests and rebuild it nightly** · docs
+  The Pages workflow builds pull requests with warnings as failures and deploys nothing for them; a nightly run picks up documentation changes in the other repositories. `tools/build-local-images.sh` stays, for trying a change before pushing it.
+- [x] **S02-09 Describe the delivery** · docs
+  Decision 11; the walkthrough's S2 part: the flow from a commit to a canary, the packages made public once, the first sync with `--prune`, a canary that aborts, rebuilding after a change in base or shared.
+- [x] **S02-10 Fetch Maven with retries and keep it cached** · runtime, docs
+  The first run of base's CI failed before compiling anything: the Maven Wrapper's download of Maven from Maven Central failed once, and the re-run passed. `java-build.yml` now keeps `~/.m2/wrapper` in the Actions cache and fetches Maven in a step of its own, with four tries 15 s apart.
+- [x] **S02-11 Clone the repositories a build needs next to it** · runtime, shared, docs
+  shared's first CI run failed in `KeycloakRealmTest`: it loads runtime's Keycloak realm file by walking up to a sibling `runtime` folder, which exists on the developer's disk and not on the runner (and without Docker the test had always skipped itself, so it first ran on GitHub). A dependency the single repository hid: a test in shared reads a file in runtime. `java-build.yml` now clones what a repository builds on, and the repositories its tests read (`siblings`), next to the checkout under their short names, the same layout as `D:\dev\workspace\ff-logistic`; shared's CI declares `siblings: runtime`.
+- [x] **S02-12 Explain the delivery, and what went wrong the first time** · docs
+  A Delivery page: Maven, CI and GHCR as workbench, conveyor and warehouse; which run publishes which images; the `gh` loop for a pull request and a forced publish; the six problems of the first run with their cause and rule; the order in which a sprint's repositories are merged; how the documentation site itself is built and published (pull request check, push, nightly, Run workflow). The walkthrough's "first images" now says they come from *Run workflow*, not from a push.
+
 
 ## S3 — Standards and warehousing
 
