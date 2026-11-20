@@ -195,6 +195,64 @@ Both sides are eventually consistent: the delivery commits first, the arrival fo
 
 The outbox is the same library on both sides (ff-base-events, xref:decisions.adoc#d12[decision 12]); each process keeps it in a schema of its own.
 
+[[flow-1]]
+=== Flow 1, on each side
+
+A question, not an event: a planner books a road leg by the coordinates of its two ends, and transportation asks routing for the distance before it saves the shipment. Transportation declares the question as a port, `DistanceLookup`; routing offers the answer as its API, `RoadDistances`. Neither knows the other.
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant D as planner
+  box modulith: one process
+    participant T as transportation
+    participant F as flows
+    participant R as routing
+  end
+  D->>T: POST /api/v1/tms/shipments, a ROAD leg with its ends
+  T->>F: DistanceLookup.roadKm(from, to)
+  F->>R: RoadDistances.roadKm(from, to)
+  R-->>T: km, from its road matrix
+  T->>T: leg ROUTING; shipment saved
+  T-->>D: 201 Created
+....
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant D as planner
+  participant G as gateway
+  participant T as transportation
+  participant R as routing
+  D->>G: POST /api/v1/tms/shipments, a ROAD leg with its ends
+  G->>T: forward
+  T->>R: GET http://routing:8084/api/v1/geo/distance, the planner's token
+  alt routing answers within 1 s + 2 s
+    R-->>T: {"distanceKm": ...}
+    T->>T: leg ROUTING
+  else no answer, an error, or too slow
+    T->>T: the straight line x 1.24, leg ESTIMATE
+  end
+  T->>T: shipment saved
+  T-->>D: 201 Created
+....
+
+The question is asked before any transaction starts, so no database connection waits for routing. What happens when routing cannot answer is decided once, in transportation's core: the straight-line estimate, and the leg says so (`distanceSource`: `GIVEN`, `ROUTING` or `ESTIMATE`). A shipment is never refused because routing is away. A leg booked by its ends is compared by its ends when the same order is booked again, so a retry while routing is down is still the same request, not a conflict.
+
+[cols="2,3,3",options="header"]
+|===
+| | Modulith | Services
+
+| The call | a method call, same thread | HTTP inside the cluster, not through the gateway
+| Who is asking | the planner, in the same security context | the planner's token, passed on; routing checks it again
+| Routing is slow | only if its road matrix is (OSRM) | the planner waits at most the timeouts (1 s to connect, 2 s for the answer)
+| Routing is down | not possible: it is the same process | the estimate, and a warning in transportation's log
+|===
+
+With the straight-line road matrix (the cluster's default), routing's answer and the estimate are the same number: the difference shows only in `distanceSource`. With OSRM configured, `ROUTING` would be the real road network.
+
 [[switch]]
 == The switch
 

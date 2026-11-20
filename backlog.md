@@ -212,8 +212,8 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
   Port: `…/logistics/geo`.
 - [x] **S05-02 Run routing on both sides** · modulith, services
   The same settings on both sides, the straight-line estimate by default (no OSRM in the cluster); the routing service gets the validator the area's requests need. Each side checks that it serves the area.
-- [ ] **S05-03 Ask routing for a leg's road distance** · shared, modulith, services
-  Flow 1: transportation's port `DistanceLookup`; a method call in the modulith, HTTP with a timeout and a haversine fallback on the services side.
+- [x] **S05-03 Ask routing for a leg's road distance** · shared, modulith, services
+  Flow 1: transportation's port `DistanceLookup`; a method call in the modulith, HTTP with a timeout and a haversine fallback on the services side. A road leg may be booked by its ends; the fallback is decided in the core, and the leg records where its distance came from. Routing's API `RoadDistances`, and `GET /api/v1/geo/distance` for the services, with the planner's token passed on.
 - [ ] **S05-04 Deliver a shipment from a completed route stop** · shared, modulith, services
   Flow 3: routing's event, through the outbox; in-process in the modulith, over Kafka on the services side, with the consumer and dead-letter topic of S04-05.
 - [ ] **S05-05 Add document links** · shared, modulith, services, runtime
@@ -221,7 +221,7 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
   Port: `base/ff-base-storage` use from S7 of the reference.
 - [x] **S05-06 Write down how a sprint is shipped, and why six repositories** · docs
   The `ship` helper in the Delivery page (it waits for each merge's own run), decision 13, and a "Try it" page for routing with the first run's answers.
-- [ ] **S05-07 Build a sprint's branches together** · runtime
+- [x] **S05-07 Build a sprint's branches together** · runtime
   A pull request's CI clones a library's branch of the same name when it exists, `main` otherwise: a sprint's pull requests go green together, in any order. Merging still follows the build order.
 
 ## S6 — Events out and analytics
