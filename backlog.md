@@ -159,7 +159,7 @@ Goal: no image built by hand. Every repository builds and tests in CI, publishes
 - [x] **S02-11 Clone the repositories a build needs next to it** · runtime, shared, docs
   shared's first CI run failed in `KeycloakRealmTest`: it loads runtime's Keycloak realm file by walking up to a sibling `runtime` folder, which exists on the developer's disk and not on the runner (and without Docker the test had always skipped itself, so it first ran on GitHub). A dependency the single repository hid: a test in shared reads a file in runtime. `java-build.yml` now clones what a repository builds on, and the repositories its tests read (`siblings`), next to the checkout under their short names, the same layout as `D:\dev\workspace\ff-logistic`; shared's CI declares `siblings: runtime`.
 - [x] **S02-12 Explain the delivery, and what went wrong the first time** · docs
-  A Delivery page: Maven, CI and GHCR as workbench, conveyor and warehouse; which run publishes which images; the `gh` loop for a pull request and a forced publish; the six problems of the first run with their cause and rule; the order in which a sprint's repositories are merged. The walkthrough's "first images" now says they come from *Run workflow*, not from a push.
+  A Delivery page: Maven, CI and GHCR as workbench, conveyor and warehouse; which run publishes which images; the `gh` loop for a pull request and a forced publish; the six problems of the first run with their cause and rule; the order in which a sprint's repositories are merged; how the documentation site itself is built and published (pull request check, push, nightly, Run workflow). The walkthrough's "first images" now says they come from *Run workflow*, not from a push.
 
 
 ## S3 — Standards and warehousing

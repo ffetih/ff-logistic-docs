@@ -215,6 +215,65 @@ gh pr list                               # open pull requests
 `-R ffetih/ff-logistic-<repository>` points any of them at another repository, without `cd`.
 That works for `run`, `workflow` and `pr merge`; `pr create --fill` still needs to run inside the repository.
 
+[[site]]
+== The documentation site: a fourth station
+
+ff-logistic-docs has no Maven and no images.
+Its CI (`.github/workflows/pages.yml`) builds this site with Antora and publishes it on GitHub Pages: https://ffetih.github.io/ff-logistic-docs/.
+
+The site is put together from all six repositories: each one's `docs/` folder is a component (runtime, base, shared, modulith, services), and this repository adds the overview.
+So the job checks out all six side by side, the same layout as on your disk, and runs `./build.sh`.
+
+[mermaid]
+....
+flowchart LR
+  subgraph repos["six repositories, side by side"]
+    D["docs<br/>overview"]
+    O["runtime, base, shared,<br/>modulith, services<br/>each docs/ folder"]
+  end
+  repos --> B["Antora build<br/>warnings fail it"]
+  B --> P["GitHub Pages<br/>ffetih.github.io/ff-logistic-docs"]
+....
+
+[cols="2,3,3"]
+|===
+|Run started by |What it does |Why
+
+|pull request
+|builds the site, with every warning as a failure; publishes nothing
+|a broken link or a bad diagram is caught before it's merged
+
+|push to `main`
+|builds and publishes
+|everyday work
+
+|every night (02:17 UTC)
+|builds and publishes
+|picks up documentation changed in the other five repositories: they can't start this workflow themselves without a token
+
+|*Run workflow*
+|builds and publishes
+|to publish another repository's documentation change now, without waiting for the night
+|===
+
+The `gh` loop is the same as for the Java repositories, without the publish step:
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/docs
+git push -u origin sprint/s02                        # first push of a new branch
+gh pr create --base main --head sprint/s02 --fill
+gh pr checks --watch                                 # the site check on the PR
+gh pr merge --merge
+gh run watch                                         # the run on main: build, then deploy
+git switch main && git pull
+----
+
+To look at the site before pushing: `./build.sh`, then open `build/site/index.html`.
+It needs Node.js 22 and the other five repositories next to this one.
+
+To publish right after a documentation change in another repository: `gh workflow run pages.yml -R ffetih/ff-logistic-docs --ref main`.
+
 [[first-run]]
 == What went wrong the first time, and why
 
@@ -266,5 +325,5 @@ When a sprint touches several repositories, merge in the order the dependencies 
 . *modulith* and *services*.
 . *Run workflow* where new images are needed; make new packages public.
 . Sync in Argo CD (xref:walkthrough.adoc#s2[walkthrough]).
-. *docs* last, describing what is now true.
+. *docs* last, describing what is now true; its merge publishes the site.
 . Tag the sprint on all six repositories.
