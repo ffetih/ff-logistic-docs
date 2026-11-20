@@ -3,6 +3,7 @@
 * xref:decisions.adoc[Decisions]
 * xref:plan.adoc[Plan]
 * xref:walkthrough.adoc[Walkthrough]
+* xref:delivery.adoc[Delivery: CI, Maven, packages]
 * xref:glossary.adoc[Glossary]
 * Repositories
 ** xref:runtime::index.adoc[Runtime]

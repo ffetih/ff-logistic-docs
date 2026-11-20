@@ -195,7 +195,12 @@ flowchart LR
 
 === Once: the first images
 
-The first push of each repository's CI creates its packages on GHCR, private, as every new package is. The cluster pulls without credentials, so make each public once: GitHub, your profile, *Packages*, the package, *Package settings*, *Change visibility*: `identity`, `logistics-app`, `warehousing`, `transportation`, `routing`, `gateway`.
+A push doesn't publish a repository's first images: the merge that brings CI in changes `ci.yml`, not an image's folder, so its publish job keeps an image that doesn't exist yet.
+Publish them once by hand, in ff-logistic-shared, ff-logistic-modulith and ff-logistic-services: *Actions*, *CI*, *Run workflow* on `main` (or `gh workflow run ci.yml --ref main` inside the repository).
+Each run creates its packages on GHCR, private, as every new package is.
+The cluster pulls without credentials, so make each public once: GitHub, your profile, *Packages*, the package, *Package settings*, *Change visibility*: `identity`, `logistics-app`, `warehousing`, `transportation`, `routing`, `gateway`.
+
+How CI, Maven and the packages fit together, the `gh` commands, and what went wrong the first time: xref:delivery.adoc[Delivery].
 
 === Once: from a Deployment to a Rollout
 
