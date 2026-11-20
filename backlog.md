@@ -219,6 +219,10 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
 - [ ] **S05-05 Add document links** · shared, modulith, services, runtime
   Presigned, write-once RustFS links: e-CMR in transportation, e-POD in routing; the storage settings on both sides.
   Port: `base/ff-base-storage` use from S7 of the reference.
+- [x] **S05-06 Write down how a sprint is shipped, and why six repositories** · docs
+  The `ship` helper in the Delivery page (it waits for each merge's own run), decision 13, and a "Try it" page for routing with the first run's answers.
+- [ ] **S05-07 Build a sprint's branches together** · runtime
+  A pull request's CI clones a library's branch of the same name when it exists, `main` otherwise: a sprint's pull requests go green together, in any order. Merging still follows the build order.
 
 ## S6 — Events out and analytics
 
@@ -244,6 +248,8 @@ Goal: numbers instead of opinions.
 - [ ] **S07-04 Count the cost of a change** · docs
   Three real changes (a new field, a new rule in one area, a new flow between areas): files, repositories, pull requests, deployments, on each side.
 - [ ] **S07-05 Write the comparison guide** · docs
+- [ ] **S07-06 Ship a sprint with one workflow** · runtime
+  The `ship` chain as a workflow in runtime (a release train): started with a branch name, it merges each repository's pull request in the build order and waits for its run. Needs a token that may act on the other repositories. Optional.
 
 ## S8–S13 — Built once, against the edge
 
