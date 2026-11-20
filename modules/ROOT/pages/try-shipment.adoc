@@ -3,7 +3,7 @@
 
 Flow 2 of xref:architecture.adoc#flow-2[the architecture]: a shipment is booked to the warehouse of xref:try-warehousing.adoc[Try it: a warehouse] (`IST-HDK`, GLN `8690001000011`), travels, and is delivered; the delivery opens an *inbound arrival* at that warehouse's dock. First on the modulith, then on the services, against the same edge.
 
-Run one block at a time and compare its answer with the ✅ line. The ✅ lines say what to expect; where a value depends on the run (ids, times), it says so.
+Run one block at a time and compare its answer with the ✅ line. The answers shown are from the first run, on 2026-11-20; ids, times and the shipment numbers differ in yours (the numbers count on with every shipment ever booked: `SHP-10001` only on the very first).
 
 Everything runs in one WSL terminal; the later steps use the variables the earlier ones set.
 
@@ -26,9 +26,10 @@ $PSQL "select 'transportation' area, version, description from transportation_fl
 ✅ Transportation at version 2 (its tables), warehousing at 4 (the inbound arrivals), and a new schema `modulith` with its own outbox history:
 
 ----
-      area       | version |      description
------------------+---------+------------------------
+      area       | version |         description
+-----------------+---------+------------------------------
  modulith outbox | 1       | event publication
+ modulith outbox |         | << Flyway Schema Creation >>
  transportation  | 0       | << Flyway Baseline >>
  transportation  | 1       | transportation begins
  transportation  | 2       | transportation tables
@@ -89,6 +90,8 @@ ID=$(echo "$SHP" | jq -r .id)
 }
 ----
 
+On the first run the number was `SHP-10003`: two shipments had been booked before. The footprint is the same for every run of this plan.
+
 The footprint (EN 16258 / ISO 14083 factors per transport mode): 18 t over 2,575 km by rail and sea emits 1.3 t CO2e, less than half of what the same trip by road alone would.
 
 === 4. It travels
@@ -113,7 +116,11 @@ curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '.[0] | {shipmentNumber, sscc, gro
 
 ----
 {
-  "shipmentNumber": "SHP-10001",
+  "status": "DELIVERED",
+  "deliveredAt": "2026-11-20T12:36:40.204040150Z"
+}
+{
+  "shipmentNumber": "SHP-10003",
   "sscc": "106141411234567897",
   "grossWeightKg": 18000.0,
   "status": "OPEN"
@@ -130,16 +137,40 @@ $PSQL "select listener_id, status, completion_attempts, completion_date is not n
        from modulith.event_publication order by publication_date"
 ----
 
-✅ One row, for the flow's listener (`…flows.DeliveriesToWarehouses.on(…ShipmentDelivered)`), `COMPLETED` after one attempt. The pickup and the departure published `ShipmentProgressed` too, but nothing in the modulith listens to it, so the registry stored nothing for them.
+✅ One row per delivery made on the modulith, for the flow's listener, `COMPLETED` after one attempt:
+
+----
+                               listener_id                                                       |  status   | completion_attempts | completed
+-------------------------------------------------------------------------------------------------+-----------+---------------------+-----------
+ com.siose.ff.logistics.flows.DeliveriesToWarehouses.on(com.siose.ff.logistics.transportation.ShipmentDelivered) | COMPLETED |                   1 | t
+----
+
+(Three such rows on the first run: two earlier deliveries, and this one.) The pickup and the departure published `ShipmentProgressed` too, but nothing in the modulith listens to it, so the registry stored nothing for them.
 
 [[services]]
 == On the services
 
 === 7. Switch
 
-As in xref:switching.adoc[Switching sides]: `active: services` in runtime, push, refresh the ApplicationSet, sync the four services and the edge.
+Everything until now ran on the modulith. Move the lever (xref:switching.adoc[Switching sides]), one line at a time:
 
-✅ The transportation service's migration Job creates its outbox, in a schema of its own:
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
+git pull
+sed -i 's/^active: .*/active: services/' deploy/implementation.yaml
+git commit -am "Switch to the services" && git push
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+until argocd app get warehousing > /dev/null 2>&1; do sleep 5; done
+argocd app sync -l ff-logistic/implementation=services
+argocd app wait -l ff-logistic/implementation=services --health --timeout 300
+argocd app sync edge
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info
+----
+
+✅ The last line answers `404`: the gateway answers now (the modulith has `/actuator/info`, the gateway does not). Do not go on before this: on the first run, step 8 was first made without the switch, and the modulith delivered it; steps 9 and 10 then found nothing on Kafka and nothing in the transportation service's outbox.
+
+The transportation service's migration Job has created its outbox, in a schema of its own:
 
 [source,bash]
 ----
@@ -147,8 +178,9 @@ $PSQL "select version, description from transportation.outbox_flyway_history"
 ----
 
 ----
- version |    description
----------+-------------------
+ version |         description
+---------+------------------------------
+         | << Flyway Schema Creation >>
  1       | event publication
 ----
 
@@ -167,12 +199,16 @@ curl -s "${H[@]}" $E/api/v1/tms/shipments/$ID2/delivery -d '{"receivedBy":"Dock 
 sleep 2; curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '[.[] | {shipmentNumber, status}]'
 ----
 
-✅ `SHP-10002`, `DELIVERED`, and now two arrivals: the one the modulith opened, and the one the warehousing service opened from Kafka:
+✅ The new shipment `DELIVERED`, and its arrival at the top of the list: opened by the warehousing service, from Kafka. The ones below it were opened by the modulith.
 
 ----
+SHP-10005
+DELIVERED
 [
-  {"shipmentNumber": "SHP-10002", "status": "OPEN"},
-  {"shipmentNumber": "SHP-10001", "status": "OPEN"}
+  {"shipmentNumber": "SHP-10005", "status": "OPEN"},
+  {"shipmentNumber": "SHP-10004", "status": "OPEN"},
+  {"shipmentNumber": "SHP-10003", "status": "OPEN"},
+  ...
 ]
 ----
 
@@ -182,10 +218,23 @@ sleep 2; curl -s "${H[@]}" $E/api/v1/wms/arrivals | jq '[.[] | {shipmentNumber, 
 ----
 kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-console-consumer.sh \
   --bootstrap-server localhost:9092 --topic ff.logistics.tms.shipment-delivered \
-  --from-beginning --max-messages 1 --property print.key=true --timeout-ms 10000
+  --from-beginning --max-messages 1 --formatter-property print.key=true --timeout-ms 10000
+echo $ID2
 ----
 
-✅ One message: the key is the shipment's id (`$ID2`), the value transportation's `ShipmentDelivered` as JSON, with `destinationGln`, `sscc` and `grossWeightKg`. Only one: the modulith's delivery in step 5 never left its JVM.
+✅ One message: the key on the left is the shipment's id (the same as `$ID2`), the value transportation's `ShipmentDelivered` as JSON:
+
+----
+cd9c64e0-5fda-4bf7-8133-3231f23bbb52    {"shipmentId":"cd9c64e0-5fda-4bf7-8133-3231f23bbb52","tenantId":"ff-eu-freight",
+"shipmentNumber":"SHP-10005","customerOrderReference":null,"totalDistanceKm":2575.0,"savedCo2eKg":1565.1,
+"deliveredAt":"2026-11-20T12:46:25.995991485Z","destinationGln":"8690001000011","sscc":"106141411234567897",
+"grossWeightKg":18000.0}
+Processed a total of 1 messages
+----
+
+The first on the topic, although four deliveries came before it: the modulith's never left its JVM.
+
+`Processed a total of 0 messages` after a `TimeoutException` means the topic is empty: the broker answered, there was nothing to read. Here that means the delivery did not go through the services (step 7).
 
 [source,bash]
 ----
@@ -193,7 +242,16 @@ kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh 
   --bootstrap-server localhost:9092 --describe --group warehousing
 ----
 
-✅ The group `warehousing` on the topic, `LAG` 0 on every partition: every message has been read.
+✅ The group `warehousing`: partition 0 holds the one message (`LOG-END-OFFSET` 1), read (`CURRENT-OFFSET` 1, `LAG` 0). The topic's three partitions are shared out between the service's two pods, one consumer each:
+
+----
+GROUP        TOPIC                               PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  HOST
+warehousing  ff.logistics.tms.shipment-delivered 0          1               1               0    /10.42.0.143
+warehousing  ff.logistics.tms.shipment-delivered 1          -               0               -    /10.42.0.143
+warehousing  ff.logistics.tms.shipment-delivered 2          -               0               -    /10.42.0.144
+----
+
+Within a group, each partition goes to one pod; a message to one of them. Which partition a message lands on follows from its key, the shipment: all messages about one shipment stay in order on one partition.
 
 === 10. The outbox on this side
 
@@ -202,7 +260,16 @@ kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh 
 $PSQL "select listener_id, status, completion_attempts from transportation.event_publication order by publication_date"
 ----
 
-✅ Rows for the Kafka externalization (here the listener is the sending itself, not a business listener), `COMPLETED`: the departure's `ShipmentProgressed` and the delivery's `ShipmentDelivered`, each sent once.
+✅ Two rows, `COMPLETED` after one attempt: the departure's `ShipmentProgressed` and the delivery's `ShipmentDelivered`, each sent once. Here the "listener" is the sending to Kafka itself, not a business listener:
+
+----
+                                         listener_id                                         |  status   | completion_attempts
+---------------------------------------------------------------------------------------------+-----------+---------------------
+ org.springframework.modulith.events.support.EventExternalizerModuleListener.externalize(java.lang.Object) | COMPLETED | 1
+ org.springframework.modulith.events.support.EventExternalizerModuleListener.externalize(java.lang.Object) | COMPLETED | 1
+----
+
+On the modulith, `ShipmentProgressed` left no row (step 6): nothing listens to it there. Here something does: the sending.
 
 [[database]]
 == What the database says
@@ -215,6 +282,33 @@ $PSQL "select a.shipment_number, a.status, a.created_at, w.code
        from wms_inbound_arrivals a join wms_warehouses w on w.id = a.warehouse_id order by a.created_at"
 ----
 
-✅ `SHP-10001` and `SHP-10002` at `IST-HDK`. The rows do not say which side opened them: the same core opened both, called once by a listener in the same JVM, once by a Kafka consumer in another process.
+✅ Every arrival at `IST-HDK`, the services' last:
+
+----
+ shipment_number | status |          created_at           |  code
+-----------------+--------+-------------------------------+---------
+ SHP-10001       | OPEN   | 2026-11-20 12:11:06.456188+00 | IST-HDK
+ SHP-10002       | OPEN   | 2026-11-20 12:12:40.586781+00 | IST-HDK
+ SHP-10003       | OPEN   | 2026-11-20 12:36:40.43213+00  | IST-HDK
+ SHP-10004       | OPEN   | 2026-11-20 12:38:31.955114+00 | IST-HDK
+ SHP-10005       | OPEN   | 2026-11-20 12:46:26.505225+00 | IST-HDK
+----
+
+The rows do not say which side opened them: the same core opened all of them, four times called by a listener in the same JVM, once by a Kafka consumer in another process.
+
+[[window]]
+=== The window, measured
+
+The delivery's time (step 5 and step 8 answer with `deliveredAt`) against the arrival's `created_at`:
+
+[cols="2,2,2,1",options="header"]
+|===
+| | Delivery committed | Arrival opened | Window
+
+| Modulith, `SHP-10003` | 12:36:40.204 | 12:36:40.432 | ≈ 0.23 s
+| Services, `SHP-10005` | 12:46:25.996 | 12:46:26.505 | ≈ 0.51 s
+|===
+
+Both eventually consistent, both well under a second on an idle laptop: the modulith hands the event to another thread in its JVM; the services send it through the outbox to Kafka, and another process reads it. What the numbers do not show is what can stand in between: on the services side, a broker and another service that may be down. That is the next exercise.
 
 Switch back to the modulith when done (xref:switching.adoc#back[back again]).
