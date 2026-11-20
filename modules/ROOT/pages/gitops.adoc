@@ -1,0 +1,179 @@
+= GitOps: how a change reaches the cluster
+:description: Continuous delivery in FF Logistic: Git as the desired state, Argo CD pulling it into the cluster, Argo Rollouts releasing it by canary. What each part does, where it is in the repositories, and why it was chosen.
+
+xref:delivery.adoc[Delivery] follows a change from a commit to an image: Maven, CI, packages. This page follows it from the image into the cluster. Nothing here pushes into the cluster: Git holds what should run, and the cluster pulls it.
+
+[[picture]]
+== The picture
+
+[mermaid]
+....
+flowchart LR
+  subgraph git["Git: the desired state"]
+    RT["runtime<br/>charts, Applications,<br/>the switch"]
+    IMP["modulith / services<br/>deploy/apps: values,<br/>image-local.yaml"]
+  end
+  DEV[developer] -->|pull request| CI[CI]
+  CI -->|image| GHCR[(GHCR)]
+  CI -->|commit: the new tag| IMP
+  ACD[Argo CD<br/>in the cluster] -->|reads| RT
+  ACD -->|reads| IMP
+  OP[operator] -->|sync| ACD
+  ACD -->|applies| K8S[ff-logistics namespace]
+  K8S -->|pulls| GHCR
+  RO[Argo Rollouts] -->|canary, analysis| K8S
+....
+
+CI has no access to the cluster: it holds no kubeconfig and runs no `kubectl`. Its last act is a commit. Argo CD, inside the cluster, reads Git and makes the cluster match it. This is the *pull* model; in a *push* model, the pipeline would deploy, and every pipeline would need the keys to the cluster.
+
+[[principles]]
+== The four principles, and how far this project follows them
+
+GitOps is usually described by four principles (OpenGitOps):
+
+[cols="2,3,1",options="header"]
+|===
+| Principle | Here | Followed
+
+| *Declarative*: the system is described as the state it should be in, not as steps to get there
+| Helm charts, kustomizations and Applications in runtime; values in each implementation's `deploy/apps`
+| yes
+
+| *Versioned and immutable*: that description is stored with its whole history, and what it names does not change
+| Every change is a commit, reviewed in a pull request. Images are tagged with the commit they were built from (`image.tag: 7b75c9a…`), never `latest`
+| yes
+
+| *Pulled automatically*: agents fetch the description themselves
+| Argo CD polls the repositories; the ApplicationSet looks again every 60 s
+| yes
+
+| *Continuously reconciled*: agents keep correcting the system towards the description
+| The App of Apps does, with self-heal. The workloads do not: Argo CD shows their drift (`OutOfSync`), and an operator syncs
+| partly, on purpose
+|===
+
+Why the last one only partly: a sync of a workload runs its database migration (a PreSync hook) and a canary, and the switch between implementations deletes one side's workloads. Here, a person decides when that happens. With self-heal on the workloads, a change merged at night would be live by morning, and the failure drill that stopped Kafka (xref:try-failures.adoc#kafka-down[drill 2]) would have been undone by Argo CD within seconds.
+
+[[argocd]]
+== Argo CD in this project
+
+[cols="2,3,3",options="header"]
+|===
+| Concept | Where | What it does here
+
+| *Application*
+| `runtime/deploy/argocd/apps/*.yaml`
+| One per platform part (postgres, kafka, keycloak, rustfs, identity, edge, argo-rollouts) and one per service of the active side.
+
+| *AppProject*
+| `project-ff-logistics.yaml`
+| Limits the project's Applications to the five repositories they may read and to the `ff-logistics` namespace; the only cluster-wide kind they may create is a Namespace.
+
+| *App of Apps*
+| `deploy/argocd/root.yaml` (`ff-root`)
+| One Application whose source is a folder of Applications. Adding a service is adding a file there, not running `kubectl`. It syncs on its own, with prune and self-heal: it holds Argo CD objects only, never workloads.
+
+| *Argo CD managing itself*
+| the `argocd` Application, `deploy/argocd`
+| Argo CD's own installation (a pinned release, with local patches) is in Git too. An upgrade is a commit that changes the version, then a sync. Its objects carry `Prune=false`, so a mistake there cannot make Argo CD delete itself.
+
+| *ApplicationSet*, matrix of two *git generators*
+| `implementation.yaml` (`ff-implementation`)
+| The first generator reads the switch (`active: services`), the second lists `deploy/apps/*` in the repository it names. One Application per folder, on the active side only. Both generators produce a `path`; `pathParamPrefix: switch` keeps the two apart.
+
+| *Multi-source Application*, `$values`
+| the ApplicationSet's template
+| The chart comes from runtime, the values from the implementation's repository (xref:decisions.adoc#d8[decision 8]). The image tag lives next to the code that built it.
+
+| *Helm value files, layered*
+| `values.yaml`, `values-local.yaml`, `image-local.yaml`
+| The last one wins. CI writes only `image-local.yaml`, so a person's settings and the bot's tag never touch the same file.
+
+| *Sync waves*
+| `argocd.argoproj.io/sync-wave: "-1"` on postgres, kafka, keycloak, rustfs and the project
+| What others depend on is applied first, and must be healthy before the next wave.
+
+| *Resource hooks*
+| the chart's Jobs
+| *PreSync*: create the database (weight -1), then migrate the service's own area. *PostSync*: a smoke test against the service. A failed PreSync Job stops the sync before any pod changes.
+
+| *Resources finalizer*
+| the ApplicationSet's template
+| When the switch moves, the other side's Applications are no longer generated. Deleting them deletes what they deployed.
+
+| *Sync policy*
+| `syncPolicy` of each Application
+| Automated with prune and self-heal for `ff-root`; manual for every workload (xref:#principles[above]). `CreateNamespace=true` where a namespace may not exist yet.
+
+| *Health and sync status*
+| the UI, `argocd app get`
+| `Synced` / `OutOfSync` compares Git with the cluster; `Healthy` / `Progressing` / `Degraded` reads the resources themselves, including a Rollout's own health.
+|===
+
+[[rollouts]]
+== Argo Rollouts: releasing by canary
+
+Every service runs as a *Rollout*, Argo Rollouts' replacement for a Deployment, with a canary strategy (xref:walkthrough.adoc#s2[S2]):
+
+[mermaid]
+....
+flowchart LR
+  S[new image synced] --> W50["setWeight: 50<br/>one of two pods is the canary"]
+  W50 --> A{"AnalysisRun<br/>GET canary:/actuator/health/release<br/>3 times, 10 s apart"}
+  A -->|all UP| W100[setWeight: 100<br/>the canary becomes stable]
+  A -->|one not UP| AB[abort:<br/>back to the stable version]
+....
+
+[cols="2,3",options="header"]
+|===
+| Concept | Here
+
+| *Rollout*
+| The chart renders a Rollout instead of a Deployment when `rollout.enabled`. `kubectl rollout status deploy/…` therefore finds nothing (xref:try-failures.adoc#lessons[a lesson from the drills]).
+
+| *Canary and stable Services*
+| `<service>` and `<service>-canary`; the analysis asks the canary directly, not through the gateway.
+
+| *AnalysisTemplate*, web provider
+| `<service>-release`: three reads, each `"UP"` or the release aborts (`failureLimit: 0`). The release group is a health group the service itself reports.
+
+| *Abort*
+| `FF_RELEASE_HEALTHY=false` makes a release report itself unfit: the canary is scaled away and the stable version keeps serving (xref:walkthrough.adoc#s2[a canary that aborts]).
+
+| *Blue-green*
+| Also in the chart (`strategy: blueGreen`, a preview Service, promotion by hand); the services use the canary.
+|===
+
+[[image-tag]]
+== Who changes the image tag
+
+After CI publishes an image, it commits the new tag to `image-local.yaml` in the same repository ("Publish image tags for …"). Argo CD then shows the Application `OutOfSync`, and a sync rolls it out.
+
+The alternative is *Argo CD Image Updater*, which watches the registry and writes the tag itself. Here the CI that built the image also records it: one place that knows which commit became which image, and no extra component with write access to Git.
+
+[[order]]
+== The order things happen in
+
+* *Within a sync*: waves first, lowest first; within a wave, hooks around the sync: PreSync Jobs, then the resources, then PostSync Jobs.
+* *Between Applications*: the platform before the services (waves -1 and 0), a service's API before its callers (routing before transportation in S5), and the edge last after a switch, so its smoke test checks the side that now answers (xref:switching.adoc#order-matters[order matters]).
+* *Between repositories*: the build order of xref:delivery.adoc#order[Delivery], before anything reaches Git as a new tag.
+
+[[not-yet]]
+== Not used yet
+
+[cols="2,3",options="header"]
+|===
+| What | When
+
+| *Argo Workflows*, *Argo Events*: jobs as workflows, started by an event (a Kafka message)
+| S13: the monthly rollup as a CronWorkflow, a workflow started by a Kafka event
+
+| *More than one cluster*: a staging cluster, promotion by commit
+| S13
+
+| *Automated sync for the workloads*
+| Possible once releases are routine; the canary already guards each one
+
+| *Notifications* (Argo CD Notifications): a message when a sync fails or an analysis aborts
+| Not planned yet
+|===

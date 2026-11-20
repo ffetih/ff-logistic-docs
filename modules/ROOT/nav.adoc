@@ -16,6 +16,7 @@
 
 .Operate
 * xref:delivery.adoc[Delivery: CI, Maven, packages]
+* xref:gitops.adoc[GitOps: from Git to the cluster]
 * xref:runtime::cluster-guide.adoc[Cluster guide]
 
 .Repositories
