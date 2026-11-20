@@ -128,6 +128,9 @@ Goal: an empty application on each side, reached through the same edge, switched
   The walkthrough page, the runtime page's switch section, and `tools/build-local-images.sh`, which builds and imports every image from the sibling folders until CI does (S2).
 - [x] **S01-11 Write down what the first run taught** · docs
   The walkthrough gains the picture to keep in mind (a railway junction), how to read a sync in three questions, what WSL needs before the first build (its own JDK 25 and git identity), why the switch takes one to three minutes and how not to wait, how to read the latest smoke test only, and the history tables as the first run left them, baseline rows explained.
+- [x] **S01-12 Wait for a new Service's route before the smoke test** · runtime, docs
+  After switching back to the modulith, its smoke test failed once: the first call timed out (`000`) and the next ones passed. The sync had created the `logistics-app` Service again, and kube-proxy writes a new ClusterIP's rules a moment after the pods are ready; the PostSync Job ran into that gap. Both smoke tests (the service chart's and the edge's) now wait up to 30 s until the Service accepts a connection, whatever it answers, then run each check once.
+  Done when: the modulith's sync after a switch passes its smoke test; an edge with nothing behind it still fails, after 30 s.
 
 ## S2 — CI, images and progressive delivery
 

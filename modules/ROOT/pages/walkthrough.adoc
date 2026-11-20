@@ -89,7 +89,9 @@ argocd app sync logistics-app          # PreSync: migrate the three areas; PostS
 argocd app sync edge                   # the edge's smoke test, now with the modulith behind it
 ----
 
-The order matters: synced before `logistics-app`, the edge's smoke test finds nothing behind the edge and fails, as it should (`info nothing behind the edge answered (000)`).
+The order matters: synced before `logistics-app`, the edge's smoke test finds nothing behind the edge and fails, as it should (`FAIL no connection to http://edge:8081 after 30 s`).
+
+Every smoke test first waits, up to 30 seconds, until its Service accepts a connection: a Service created by the same sync (as after every switch) is routable a moment after its pods are ready, and a check that ran into that gap would fail on the network, not on the application. The checks themselves then run once.
 
 Each sync of the edge starts a new smoke-test Job. The latest one's log:
 
