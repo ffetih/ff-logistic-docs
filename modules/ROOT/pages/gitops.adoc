@@ -154,7 +154,7 @@ The alternative is *Argo CD Image Updater*, which watches the registry and write
 [[order]]
 == The order things happen in
 
-* *Within a sync*: waves first, lowest first; within a wave, hooks around the sync: PreSync Jobs, then the resources, then PostSync Jobs.
+* *Within a sync*: waves first, lowest first; within a wave, hooks around the sync: PreSync Jobs, then the resources, then PostSync Jobs (xref:#ui-hooks[the anchored Jobs]).
 * *Between Applications*: the platform before the services (waves -1 and 0), a service's API before its callers (routing before transportation in S5), and the edge last after a switch, so its smoke test checks the side that now answers (xref:switching.adoc#order-matters[order matters]).
 * *Between repositories*: the build order of xref:delivery.adoc#order[Delivery], before anything reaches Git as a new tag.
 
@@ -217,11 +217,151 @@ image::argocd/transportation.png[transportation: the same shape, revision 4]
 
 image::argocd/warehousing.png[warehousing: the same shape, revision 2]
 
-* *`R` rollout* instead of a Deployment, with *`AT` routing-release*, the AnalysisTemplate, and one *`AR` AnalysisRun* per release: each canary's three reads of `/actuator/health/release` (xref:#rollouts[Rollouts]).
+* *`R` rollout* instead of a Deployment, with *`AT` routing-release*, the AnalysisTemplate, and one *`AR` AnalysisRun* per release: each canary's three reads of `/actuator/health/release` (xref:#ui-analysis[below]).
 * *Two Services*: `routing` (stable) and `routing-canary`; the analysis asks the canary directly.
 * *ReplicaSets `rev:2` to `rev:4`*: one per release, the newest with the pods; two older ones are kept for a rollback (`revisionHistoryLimit: 2`). Routing and transportation had four releases by then, warehousing two.
-* *The anchored Jobs*: one `migrate--presync` and one `smoke-test--postsync` per sync, the newest with its completed pod (`0/1`). They stay a day (`hookJobTtlSeconds: 86400`), to read their logs, then Kubernetes deletes them.
+* *The anchored Jobs*: one `migrate--presync` and one `smoke-test--postsync` per sync, the newest with its completed pod (`0/1`). They stay a day (`hookJobTtlSeconds: 86400`), to read their logs, then Kubernetes deletes them (xref:#ui-hooks[below]).
 * *`routing-smoke-test`*, a ConfigMap: the smoke test's checks, as values.
+
+[[ui-analysis]]
+=== `AT` and `AR`: who judges a canary
+
+An AnalysisTemplate is an *inspection form*; an AnalysisRun is *one inspection*, filled in for one release. The form is written once per service and synced from Git like any other resource. The Rollout controller fills in a new copy each time a release reaches its `analysis` step, and keeps it afterwards as the record. It is the same relationship as a class and its objects.
+
+[mermaid]
+....
+sequenceDiagram
+  participant R as Rollout routing
+  participant AR as AnalysisRun
+  participant C as routing-canary → the new pod
+  R->>R: setWeight 50: one new pod, one old
+  R->>AR: create from the template routing-release
+  Note over AR: initialDelay 10 s
+  loop count 3, interval 10 s
+    AR->>C: GET /actuator/health/release
+    C-->>AR: status UP
+  end
+  AR-->>R: Successful
+  R->>R: setWeight 100: the new version is stable
+....
+
+The form, field by field (`templates/analysistemplate.yaml` of the `ff-service` chart):
+
+[cols="2,2,4",options="header"]
+|===
+| Field | Here | Meaning
+
+| `provider: web`
+| `http://routing-canary.ff-logistics.svc.cluster.local.:8084/actuator/health/release`
+| An HTTP GET from the Rollouts controller. Through the *canary* Service, so it reaches the new pods only, never the stable ones. The trailing dot makes the name absolute: without it, the DNS search domains cost 3–5 s on k3d.
+
+| `jsonPath`, `successCondition`
+| `{$.status}`, `result == "UP"`
+| Take `status` from the body; a measurement passes when it is `UP`.
+
+| `initialDelay`, `interval`, `count`
+| `10s`, `10s`, `3`
+| The first read 10 s after the canary is ready, then two more, 10 s apart: about half a minute.
+
+| `failureLimit`
+| `0`
+| One `DOWN` fails the whole run.
+
+| `timeoutSeconds`
+| `5`
+| A read with no answer is an *Error*, not a failure. A few in a row (`consecutiveErrorLimit`, 4 by default) also end the run.
+|===
+
+What the run's result does:
+
+* *Successful*: the Rollout moves to its next step, `setWeight: 100`.
+* *Failed*: the Rollout *aborts*. The canary is scaled to zero, the stable Service never stopped pointing at the old pods, and the Rollout, and with it the Application, is `Degraded`. Nothing in Git changes: the next sync of a fixed image starts a new release (xref:walkthrough.adoc#s2[a canary that aborts], S2).
+
+A step, not a background: the `analysis` sits between two steps and blocks the release until it ends. The other kind, `strategy.canary.analysis`, runs alongside all the steps and aborts whenever it fails.
+
+*What it asks, honestly*: the release group holds one indicator, a switch (`ff.release.healthy`, `FF_RELEASE_HEALTHY`). It shows the mechanism, a release that declares itself unfit; it does not measure how the canary behaves under traffic. A real analysis asks the metrics, for example the canary pod's share of `5xx` answers from Prometheus (`provider: prometheus`). That needs metrics first (xref:#not-yet[not yet]).
+
+See the record of the last release:
+
+[source,bash]
+----
+kubectl -n ff-logistics get analysisruns | grep routing
+AR=$(kubectl -n ff-logistics get analysisruns --sort-by=.metadata.creationTimestamp -o name | grep routing | tail -1)
+kubectl -n ff-logistics get $AR -o jsonpath='{range .status.metricResults[*].measurements[*]}{.phase} {.value} {.finishedAt}{"\n"}{end}'
+----
+
+The name is the Rollout, the new pods' template hash, the revision and the step index (`1`: the second step). Expect three lines, `Successful UP …`, 10 s apart.
+
+[[ui-hooks]]
+=== The anchored Jobs: PreSync and PostSync
+
+A sync is a *move into a new flat*. *PreSync* is the work done before the furniture comes in: the schema the new code expects. The *sync* phase is the furniture: the ConfigMap, the Services, the AnalysisTemplate, the Rollout. *PostSync* is the walk through the flat once everything is in place: the smoke test.
+
+A hook is a resource with the annotation `argocd.argoproj.io/hook`. Argo CD does not keep it in sync; it runs it at that moment of the sync and waits for it to finish. That is the anchor in the UI.
+
+[mermaid]
+....
+flowchart LR
+  P["PreSync<br/>routing-migrate-xxxxx<br/>Flyway, then exits"] -->|Completed| S["Sync<br/>ConfigMap, Services,<br/>AnalysisTemplate, Rollout"]
+  S --> C["Canary<br/>50 % → AnalysisRun → 100 %"]
+  C -->|Healthy| Q["PostSync<br/>routing-smoke-test-xxxxx<br/>three checks"]
+  Q -->|Completed| OK([sync Succeeded])
+  P -->|Failed| F1(["sync Failed<br/>nothing applied, the old pods serve"])
+  C -->|analysis Failed| F2(["Rollout aborted, Degraded<br/>PostSync never runs"])
+  Q -->|Failed| F3(["sync Failed<br/>the new version stays: read the log"])
+....
+
+[cols="2,3,4,4",options="header"]
+|===
+| Hook | Job | What it does | If it fails
+
+| PreSync, weight `-1`
+| `<service>-database-…`
+| Creates the service's own database on the PostgreSQL server, if missing (`database.create`).
+| In the chart, but off for every service here: they all use `ff_logistics` (xref:decisions.adoc#d3[decision 3]).
+
+| PreSync
+| `<service>-migrate-…`
+| The service's own image with the Spring profile `migrate`: Flyway migrates the area's tables, records them in `<area>_flyway_history`, and the process exits.
+| The sync fails before anything else is applied. No new pod ever starts on a schema it does not have.
+
+| PostSync
+| `<service>-smoke-test-…`
+| `curl` in a shell script: readiness `UP`; `/api/v1/me` refused (`401`) without a token, `200` with one, for the tenant `ff-eu-freight`.
+| The sync is marked `Failed`. Nothing is rolled back: the failure is the signal to look. `backoffLimit: 0`, because a smoke test that only passes on a second try has failed.
+
+| PostSync
+| `edge-smoke-test-…`
+| The same kind of checks through the edge, after the edge Application's sync.
+| As above.
+|===
+
+Four things that are easy to miss:
+
+* *The migration runs while the old version serves.* The old pods keep taking traffic during PreSync and the canary, so a migration has to suit both versions: add, don't rename or drop in the same release. S05-05's `V4` adds a nullable column, `ecmr_document_uri`, which the old code never reads.
+* *PostSync waits for the canary.* It runs once every resource is `Healthy`. A Rollout in its canary steps is `Progressing`, so the smoke test checks the version that already takes all the traffic. An aborted canary never becomes `Healthy`, so the test never runs on it.
+* *A new name on every sync* (`generateName`): Argo CD watches this sync's Job, never one left from the sync before. That is why the UI shows several anchored Jobs side by side, one per sync of the day.
+* *Kubernetes deletes them, not Argo CD*: `ttlSecondsAfterFinished: 86400`, a day to read a failed run's log. The checks themselves are a plain ConfigMap with a tick, applied in the sync phase, so the PostSync Job reads the checks of the commit being synced.
+
+Read the last two Jobs of a sync:
+
+[source,bash]
+----
+for h in migrate smoke-test; do
+  J=$(kubectl -n ff-logistics get jobs -l app.kubernetes.io/name=routing-$h --sort-by=.metadata.creationTimestamp -o name | tail -1)
+  echo "== $J"; kubectl -n ff-logistics logs $J | tail -5
+done
+----
+
+The migration's last lines name the versions it applied, or say the schema is up to date. The smoke test prints one `ok` line per check:
+
+----
+ok   sign-in as nexus.planner
+ok   http://routing:8084 accepts connections
+ok   GET /actuator/health/readiness (none): 200
+ok   GET /api/v1/me (none): 401
+ok   GET /api/v1/me (token): 200
+----
 
 [[ui-platform]]
 === kafka, keycloak, postgres, rustfs: the platform
@@ -264,5 +404,11 @@ image::argocd/rustfs.png[rustfs: chart 1.0.6, its ConfigMap, volume claim, Secre
 | Possible once releases are routine; the canary already guards each one
 
 | *Notifications* (Argo CD Notifications): a message when a sync fails or an analysis aborts
+| Not planned yet
+
+| *Analysis by metrics*: the canary's error rate from Prometheus, as a step or in the background
+| Not planned yet; it needs metrics first (xref:#ui-analysis[what the analysis asks now])
+
+| *A `SyncFail` hook*: a Job that runs only when a sync fails, to clean up or report
 | Not planned yet
 |===
