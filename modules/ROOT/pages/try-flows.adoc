@@ -1,5 +1,5 @@
 = Try it: routing talks to transportation
-:description: Flows 1 and 3 of S5 as numbered steps: a road leg's distance asked of routing, the drill with routing down, and a completed route stop that delivers its shipment.
+:description: Flows 1 and 3 of S5 as numbered steps: a road leg's distance asked of routing, the drill with routing down, a completed route stop that delivers its shipment, and what a service says about a request it cannot read.
 
 Two flows join routing and transportation (xref:architecture.adoc#flows[the flows]):
 
@@ -25,7 +25,7 @@ plan() { curl -s -w "\n%{http_code} %{time_total}s\n" "${H[@]}" $E/api/v1/tms/sh
   | { read -r body; read -r code; echo "$body" | jq '{shipmentNumber, leg: .legs[0] | {distanceKm, distanceSource}, detail}'; echo "$code"; }; }
 ----
 
-`ROAD` and `plan` live in this terminal only: in another one, `$ROAD` is empty, and the request is refused with `400` before anyone is asked.
+`ROAD` and `plan` live in this terminal only: in another one, `$ROAD` is empty, and the request is refused with `400` `missing-body` before anyone is asked (xref:#unreadable[step 7]).
 
 [[flow-1]]
 == 2. Flow 1: the distance from routing
@@ -181,3 +181,47 @@ flowchart LR
   S["routing<br/>stop COMPLETED"] -->|"outbox → Kafka<br/>route-stop-completed"| T["transportation<br/>shipment DELIVERED"]
   T -->|"outbox → Kafka<br/>shipment-delivered"| W["warehousing<br/>arrival OPEN"]
 ....
+
+[[unreadable]]
+== 7. A request the service cannot read
+
+The first run of step 2 in another terminal sent no body at all, and got a bare `400`: no title, no detail. Every other refusal said what was wrong; this one did not (S05-08). `ff-base-web`'s problem handler now answers it, so every service does, routing included:
+
+[source,bash]
+----
+bad() { echo "== $1"; curl -s -w '\n%{http_code}\n' "${H[@]}" -X POST "$E$2" ${3:+-d "$3"} \
+  | { read -r body; read -r code; echo "$body" | jq -c '{status, title, detail, type}'; echo "$code"; }; }
+bad "no body"             /api/v1/tms/shipments
+bad "broken JSON"         /api/v1/tms/shipments '{"consignorName": "x",}'
+bad "a word for a number" /api/v1/tms/shipments '{"grossWeightKg": "heavy"}'
+bad "no body, routing"    /api/v1/geo/routes
+----
+
+✅ Four `400`s, each saying what is wrong and where:
+
+----
+== no body
+{"status":400,"title":"Missing Request Body","detail":"The request has no body; this endpoint expects JSON.","type":"urn:siose-ff:problem:missing-body"}
+400
+== broken JSON
+{"status":400,"title":"Unreadable Request Body","detail":"The request body is not valid JSON for this endpoint (line 1, column 23).","type":"urn:siose-ff:problem:unreadable-body"}
+400
+== a word for a number
+{"status":400,"title":"Unreadable Request Body","detail":"The request body is not valid JSON for this endpoint at grossWeightKg (line 1, column 19).","type":"urn:siose-ff:problem:unreadable-body"}
+400
+== no body, routing
+{"status":400,"title":"Missing Request Body","detail":"The request has no body; this endpoint expects JSON.","type":"urn:siose-ff:problem:missing-body"}
+400
+----
+
+The answer names the property the client got wrong, which is part of the API, and never the parser's own message, which names Java types (`double`, the request's class).
+
+[[unreadable-lesson]]
+=== What the first run found
+
+The first version passed its unit tests and still showed no line and column on the cluster. The tests had handed the handler a parser message in the format Jackson 2 writes, `line: 1, column: 25`; Jackson 3 writes only `byte offset: #22` in its message, and keeps the line, the column and the property path on the exception object. The second version reads those, and its tests parse with a real `JsonMapper`.
+
+That caught one more wrong guess at once: Jackson 3 refuses a missing number in a record (`FAIL_ON_NULL_FOR_PRIMITIVES` is on by default), so a list whose first item lacked a number failed there, not at the second item the test meant.
+
+Like the routing `404` of xref:#flow-1-lesson[step 2], the change was in a library and no service's folder: `gh workflow run ci.yml` in the services repository, then a sync of all four applications.
+

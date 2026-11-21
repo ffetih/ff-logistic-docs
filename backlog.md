@@ -223,8 +223,11 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
   The `ship` helper in the Delivery page (it waits for each merge's own run), decision 13, and a "Try it" page for routing with the first run's answers.
 - [x] **S05-07 Build a sprint's branches together** · runtime
   A pull request's CI clones a library's branch of the same name when it exists, `main` otherwise: a sprint's pull requests go green together, in any order. Merging still follows the build order.
-- [ ] **S05-08 Explain a request without a body** · base
-  An empty or unreadable request body is answered `400` with no title and no detail (seen in S5's flow-1 run). Every other refusal says what is wrong; this one should too, from `ff-base-web`'s problem handler.
+- [x] **S05-08 Explain a request without a body** · base
+  An empty or unreadable request body was answered `400` with no title and no detail (seen in S5's flow-1 run). Now `missing-body` or `unreadable-body`, with the property and the place the parser stopped, from `ff-base-web`'s problem handler. The first version guessed the parser's message format; the second reads Jackson's exception ("Try it: routing talks to transportation", step 7).
+
+- [ ] **S05-09 Wrap long lines in code blocks** · docs
+  Commands and answers on the "Try it" pages scroll sideways in the site's narrow column. A few lines of CSS in `supplemental-ui` would wrap them on screen only; copying keeps the original line. Check it against the UI bundle's templates in a local build.
 
 ## S6 — Events out and analytics
 
