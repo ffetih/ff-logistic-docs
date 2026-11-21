@@ -216,8 +216,8 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
   Flow 1: transportation's port `DistanceLookup`; a method call in the modulith, HTTP with a timeout and a haversine fallback on the services side. A road leg may be booked by its ends; the fallback is decided in the core, and the leg records where its distance came from. Routing's API `RoadDistances`, and `GET /api/v1/geo/distance` for the services, with the planner's token passed on.
 - [x] **S05-04 Deliver a shipment from a completed route stop** · shared, modulith, services
   Flow 3: routing's event, through the outbox; in-process in the modulith, over Kafka on the services side, with the consumer and dead-letter topic of S04-05. A stop names the shipment it carries; completing it publishes `RouteStopCompleted`; transportation's `ShipmentDeliveries` delivers, once, and flow 2 follows. The routing service gets an outbox of its own (schema `routing`). Spring Modulith's Kafka support reads bytes and converts JSON for the listener: the consumer takes the message type.
-- [ ] **S05-05 Add document links** · shared, modulith, services, runtime
-  Presigned, write-once RustFS links: e-CMR in transportation, e-POD in routing; the storage settings on both sides.
+- [x] **S05-05 Add document links** · shared, modulith, services, runtime
+  Presigned, write-once RustFS links: e-CMR in transportation, e-POD in routing; the storage settings on both sides. The proof of delivery is asked for by stop code, like the completion. ff-base-storage and RustFS's Secret were already in place: no change in runtime.
   Port: `base/ff-base-storage` use from S7 of the reference.
 - [x] **S05-06 Write down how a sprint is shipped, and why six repositories** · docs
   The `ship` helper in the Delivery page (it waits for each merge's own run), decision 13, and a "Try it" page for routing with the first run's answers.
