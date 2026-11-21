@@ -158,6 +158,95 @@ The alternative is *Argo CD Image Updater*, which watches the registry and write
 * *Between Applications*: the platform before the services (waves -1 and 0), a service's API before its callers (routing before transportation in S5), and the edge last after a switch, so its smoke test checks the side that now answers (xref:switching.adoc#order-matters[order matters]).
 * *Between repositories*: the build order of xref:delivery.adoc#order[Delivery], before anything reaches Git as a new tag.
 
+[[ui]]
+== Reading the Argo CD UI
+
+The concepts above, as Argo CD shows them: the local cluster on 2026-11-21, on the services side, during S5. Open it at `http://127.0.0.1:8080`.
+
+[[ui-legend]]
+=== The signs
+
+[cols="1,3",options="header"]
+|===
+| Sign | Means
+
+| green heart | *Health*: the resource itself is fine (pods ready, a Rollout finished, a Job succeeded). Read from the cluster.
+| green tick | *Sync*: the resource matches Git. Read by comparing the two. A resource with a heart but no tick is not Argo CD's: something else created it (a ReplicaSet, a pod, a StatefulSet's volume claim).
+| anchor | A *hook*: a Job that runs around a sync (PreSync, PostSync), not part of the steady state.
+| `rev:N` | The revision of a ReplicaSet or AnalysisRun: one per release.
+| `and (1) more` | A *multi-source* Application: the second source is the values repository (xref:#argocd[`$values`]).
+|===
+
+[[ui-list]]
+=== The Applications
+
+image::argocd/applications.png[The Applications list: thirteen Applications, all Healthy and Synced]
+
+* *Thirteen, all `Healthy` and `Synced`*: the counters on the left. A drift would show as `OutOfSync` there first.
+* *Two projects.* Argo CD's own pieces (`argo-rollouts`, `argocd`, `ff-root`) are in `default`; everything of FF Logistic is in `ff-logistics`, limited by its AppProject.
+* *Two kinds of source.* Most point into `ff-logistic-runtime.git` at `main`; `rustfs` points to a Helm repository at a pinned chart version, `1.0.6`.
+* *One extra label* on `gateway`, `routing`, `transportation`, `warehousing`: `ff-logistic/implementation`. These four were made by the ApplicationSet, not written by hand.
+
+[[ui-root]]
+=== ff-root: the App of Apps
+
+image::argocd/ff-root.png[ff-root's tree: its child Applications, the ApplicationSet and the AppProject]
+
+* *Its children are Argo CD objects*: ten Applications, the ApplicationSet `ff-implementation`, the AppProject `ff-logistics`. No pod, no Service: workloads belong to the children.
+* *`Auto sync is enabled`*: the only one. Add an Application file in Git, and it appears here by itself.
+* *The ApplicationSet's four Applications* hang off it on the right: the services side, because `implementation.yaml` says `active: services`. Switch, and these four give way to `logistics-app`.
+* *Synced to `main (abbd180)`, last sync much older*: sync status compares with Git now; the last sync is the last operation. Nothing in ff-root's folder changed since, so there was nothing to do.
+
+[[ui-deployment]]
+=== identity and gateway: a Deployment
+
+image::argocd/identity.png[identity: a Service and a Deployment with two ReplicaSets and one pod]
+
+image::argocd/gateway.png[gateway: the same shape]
+
+* *A Deployment, not a Rollout*: no canary. The identity service and the nginx gateway are released by a plain rolling update.
+* *Two ReplicaSets*: `rev:2` holds the pod, `rev:1` is the previous release, kept at zero pods so a rollback is quick (`revisionHistoryLimit: 2`).
+* *`and (1) more`*: the chart from runtime, the values from the repository that builds the image (xref:decisions.adoc#d8[decision 8]).
+
+[[ui-rollout]]
+=== routing, transportation and warehousing: a Rollout
+
+image::argocd/routing.png[routing: Rollout, AnalysisTemplate, AnalysisRuns, ReplicaSets, hook Jobs]
+
+image::argocd/transportation.png[transportation: the same shape, revision 4]
+
+image::argocd/warehousing.png[warehousing: the same shape, revision 2]
+
+* *`R` rollout* instead of a Deployment, with *`AT` routing-release*, the AnalysisTemplate, and one *`AR` AnalysisRun* per release: each canary's three reads of `/actuator/health/release` (xref:#rollouts[Rollouts]).
+* *Two Services*: `routing` (stable) and `routing-canary`; the analysis asks the canary directly.
+* *ReplicaSets `rev:2` to `rev:4`*: one per release, the newest with the pods; two older ones are kept for a rollback (`revisionHistoryLimit: 2`). Routing and transportation had four releases by then, warehousing two.
+* *The anchored Jobs*: one `migrate--presync` and one `smoke-test--postsync` per sync, the newest with its completed pod (`0/1`). They stay a day (`hookJobTtlSeconds: 86400`), to read their logs, then Kubernetes deletes them.
+* *`routing-smoke-test`*, a ConfigMap: the smoke test's checks, as values.
+
+[[ui-platform]]
+=== kafka, keycloak, postgres, rustfs: the platform
+
+image::argocd/kafka.png[kafka: a StatefulSet, its pod, its volume claim, two Services]
+
+* *A StatefulSet*, `kafka`, with its pod `kafka-0` and a ControllerRevision: a fixed name and its own disk.
+* *`data-kafka-0`* has a heart but no tick: the StatefulSet's claim template created it, not Argo CD. A prune or deleting the Application cannot remove it.
+* *Two Services*: `kafka` for the cluster, `kafka-external` for the host (NodePort, `localhost:9094`).
+
+image::argocd/keycloak.png[keycloak: a ConfigMap with a hash suffix, two Secrets, a Service, a Deployment]
+
+* *`keycloak-realm-m92fm69ddm`*: a ConfigMap whose name ends in a hash of its content (kustomize's `configMapGenerator`). A changed realm gets a new name, and the Deployment that refers to it rolls.
+* *Two Secrets*: the admin's credentials, and the `smoke-test-user` the services' smoke tests log in with.
+
+image::argocd/postgres.png[postgres: a volume claim, two Secrets, a Service, a Deployment]
+
+* *`postgres-data`*, the volume claim, has a tick: Argo CD manages it, but with `Prune=false,Delete=false`, so neither a pruning sync nor deleting the Application removes the data.
+* *Two Secrets*: the applications' credentials, and the analytics database reader's, waiting for S8 (local example values, committed on purpose so a fresh cluster needs no manual step).
+
+image::argocd/rustfs.png[rustfs: chart 1.0.6, its ConfigMap, volume claim, Secret, Service, ServiceAccount, Deployment]
+
+* *Synced to `1.0.6`, `and (2) more`*: three sources, the upstream chart, this project's values for it, and this project's folder with the credentials Secret.
+* *`rustfs-svc`*: the Service the applications store documents through (S05-05); its NodePort is the host's `localhost:9000`, where presigned links point.
+
 [[not-yet]]
 == Not used yet
 
