@@ -289,6 +289,35 @@ sequenceDiagram
 
 Two consumers, two styles. The warehousing service reads its messages as Strings and parses them itself. The transportation service also *sends* events, so it has Spring Modulith's Kafka support, which sets its consumer to bytes and adds a JSON message converter to every `@KafkaListener`: the listener takes the message type (`RouteStopCompletedMessage`) and the converter fills it. A listener there that asks for a `String` gets nothing: every record fails conversion, which counts as fatal, and goes to the dead-letter topic unread. That is what the first test run showed, before the cluster ever did.
 
+[[documents]]
+== Documents
+
+Two documents are files, not rows: a shipment's signed e-CMR (a PDF) and a route stop's proof of delivery (the consignee's signature, a PNG). They live in object storage, RustFS in the cluster, through the S3 API (ff-base-storage).
+
+[mermaid]
+....
+sequenceDiagram
+  autonumber
+  participant C as client
+  participant A as transportation or routing
+  participant S as RustFS (S3)
+  C->>A: POST …/ecmr/upload-link
+  A->>A: reserve the location (first time): s3://ff-documents/<tenant>/ecmr/<shipment>/ecmr.pdf
+  A->>S: already there? (HEAD)
+  A-->>C: PUT url, valid 15 min, headers Content-Type and If-None-Match: *
+  C->>S: PUT the file, with those headers
+  C->>A: GET …/ecmr/download-link
+  A-->>C: GET url, valid 15 min
+  C->>S: GET the file
+....
+
+* *The bytes never pass through the application.* It signs links; the client and the store move the file.
+* *Written once.* Once the file is stored, an upload link is refused (`409 document-already-stored`); asked again before that, the same location comes back. The link itself carries `If-None-Match: *`, so the store refuses to overwrite even with a link issued earlier.
+* *Per tenant.* Each tenant has its own key prefix in one bucket, and a link is signed only for a location under the caller's prefix.
+* *Two addresses.* Inside the cluster the application talks to `rustfs-svc:9000`; links are signed for `localhost:9000`, the host port a browser or `curl` can reach. A presigned link includes the host it is signed for.
+
+Both sides use the same bucket, with the same keys: the second thing they share, after the database. Without a store (`ff.storage.provider=reference-only`, the default outside the cluster), locations are still reserved, and links are refused with `503 object-store-unavailable`.
+
 [[switch]]
 == The switch
 
