@@ -1,0 +1,104 @@
+= Try it: a load, with Kafka away
+:description: The first measured run of S7, services side: what five virtual users see at the edge, what the pods cost, and where a minute without Kafka waits.
+
+xref:runtime::cluster-guide.adoc#load[The load script] runs the walkthrough against the edge: each virtual user plans a shipment, picks it up, departs, delivers it to the Hadimkoy hub, then reads the warehouses and a road distance. A second terminal can stop one part while that runs. This page is the first time both were done together, on the services side. The modulith has not been measured yet, so nothing here is a comparison.
+
+The answers are from 2026-11-21. `deploy/load/run.sh 5 4m 30` started at 08:04:24Z: five virtual users, 30 seconds of warm-up, four minutes measured. Twelve seconds later, `deploy/load/drill.sh kafka 60` stopped the broker for a minute. k6 says what the caller saw. The drill says what was waiting behind the edge.
+
+[[caller]]
+== What the caller saw
+
+Warm-up is not counted. Of the four minutes that are, Kafka was down for about the first minute (it was scaled back at 08:05:40Z) and up for the rest.
+
+[source]
+----
+side: services  vus: 5  warm-up: 30s  measured: 4m
+iterations: 1125  (4.69/s)  requests: 7880  (32.8/s)  failed: 0.00%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    66.8    70.6    71.3    71.4
+plan          1125    0.0%    20.1    44.5    86.2   134.8
+shipment      1125    0.0%     3.8    13.4    17.4    22.0
+pickup        1125    0.0%    11.9    20.2    27.0    34.3
+departure     1125    0.0%    10.2    17.2    21.8    29.8
+deliver       1125    0.0%     9.7    16.6    20.1    26.5
+warehouses    1125    0.0%     4.0     7.6    10.1    13.9
+distance      1125    0.0%     2.3     4.1     6.2    16.6
+----
+
+Nothing failed, including the deliveries made while the broker was down. A delivery answers from the database commit; the event leaves afterwards (xref:try-failures.adoc#kafka-down[the same thing, one shipment at a time]). The slowest delivery in the four minutes was 26.5 ms.
+
+`plan` is the slow request. It is flow 1: the shipment is stored, and transportation asks routing for the road distance over HTTP. A direct `distance` call, the same two points and no shipment, is the fastest line in the table. The three writes sit together, around 10 ms at the median.
+
+Five users finished 4.69 iterations a second. Each iteration then waits one second, as a person would, so the pause sets the rate. This run is what a small desk looks like, not how far the side can be pushed.
+
+Sign-in happened five times, once per user, at the start of the run. A token lasts five minutes and the measured window is four, so it stays off the hot path.
+
+[[pods]]
+== What the pods cost
+
+`kubectl top`, sampled about every 15 seconds. At rest, before the users started; under load, the highest sample of each pod. CPU is millicores.
+
+[cols="3,1,1,1,1",options="header"]
+|===
+| | At rest, CPU | At rest, MiB | Under load, CPU | Under load, MiB
+
+| gateway (1 pod) | 1 | 16 | 21 | 19
+| routing (2) | 5 | 733 | 85 | 746
+| transportation (2) | 12 | 897 | 379 | 932
+| warehousing (2) | 9 | 767 | 113 | 786
+| *the services side* | *27* | *2413* | *598* | *2483*
+|===
+
+Memory barely moved: 70 MiB on 2.4 GiB. The JVMs were already resident at rest, which is most of what seven pods cost when nobody is calling. CPU did move, and transportation took most of it (379 of 598). It is the service every iteration writes three times, and the one that asks routing.
+
+The platform both sides share, over the same window:
+
+[cols="3,1,1",options="header"]
+|===
+| | CPU, millicores | MiB
+
+| Kafka | 584 | 415
+| PostgreSQL | 86 | 199
+| analytics loader | 26 | 289
+| identity | 6 | 270
+| *shared platform* | *702* | *1173*
+|===
+
+At this rate the broker used about as much CPU as the seven service pods together. Identity barely shows: the applications check tokens locally, and five sign-ins are the whole of its work (xref:architecture.adoc#layers[the identity rule]).
+
+[[kafka]]
+== Kafka away for a minute
+
+The drill counts from its own start (08:04:36Z). `delivered` is shipments delivered, `arrivals` is flow 2, `analytics` is rows the loader stored, `outbox` is events in `transportation.event_publication` not yet handed to Kafka. The four numbers of one line are four queries, one after another, so while traffic is moving the later columns are a few seconds newer. A healthy line can show analytics a handful ahead of delivered for that reason alone.
+
+Kafka was still up on the first line. From the next line the arrivals and the analytics figure freeze, and the outbox grows by about three rows per delivery: pickup, departure and the delivery each publish one event (`ShipmentProgressed` twice, then `ShipmentDelivered`).
+
+[source]
+----
+  time  kafka     delivered  arrivals analytics  outbox
+   +2s  up                5         7        10       0
+   +8s  away             40        15        15      75
+  +63s  away            295        15        15     855
+-- kafka back at +64s
+  +80s  back            370        15        15    1095
+  +87s  back            405       155       160     760
+ +271s  back           1225      1085      1085     410
+ +476s  back           1225      1225      1225       0
+-- caught up 412s after kafka came back
+----
+
+Scaling the broker back is not the moment it accepts publishes. From +64s to +80s the outbox was still climbing, and arrivals stayed at 15. At +87s both consumers were reading again: arrivals and analytics jumped by about 140, and the outbox dropped by 335.
+
+k6 stopped at about +271s (delivered stays 1225 from then on). The outbox still held 410 events, and it stepped down by 50 to 100 rows roughly every half minute, which is how often the upkeep looks for rows that are due. The last of them cleared at +476s. Caught up means arrivals and analytics within three of the deliveries, and no more than three events left in the outbox: what is in flight at one moment of this load.
+
+1225 delivered, 1225 arrivals, 1225 analytics, an empty outbox. Nothing was lost, and nobody replayed anything by hand. The caller, from the table above, did not see the minute.
+
+The earlier drill, one shipment and Kafka down for several minutes, waited about seven minutes because of the doubling pause between tries (xref:try-failures.adoc#timeline[that timeline]). Here the outage was a minute. The 412 seconds are a backlog of about a thousand events, emptied on that same pause, while new deliveries kept arriving until the users stopped.
+
+[[shown]]
+== What this run shows, and what it does not
+
+* *The caller and the dock disagree for as long as the backlog lasts.* Deliveries answered in under 30 ms. The warehouse and analytics learned about them up to seven minutes later.
+* *The resident memory is paid at rest.* Load added CPU, almost all of it in transportation, and almost no memory.
+* *The broker is part of the cost of this side.* At five users it matched the services' CPU. The modulith's listeners do not need it for flow 2; both sides need it for analytics, since S6.
+* *One side only.* The same command against the modulith is the next run. Startup time is not in these files.
