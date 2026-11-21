@@ -354,3 +354,26 @@ Steps and the first run's answers: xref:try-flows.adoc[Try it: routing talks to 
 === Documents
 
 A shipment's signed e-CMR (a PDF) and a route stop's proof of delivery (a PNG) are stored in RustFS through presigned links: the service signs a slip, the client takes the file straight to the store, and nothing can be written twice (xref:architecture.adoc#documents[how]). Steps, and the three refusals that keep a document written once: xref:try-documents.adoc[Try it: documents, written once].
+
+[[s6]]
+== S6: events out, to analytics
+
+What exists: the analytics loader, built once in shared and deployed whichever side is active. It reads delivered shipments from Kafka into a database of its own, locks the rows to the tenant a reader names, and rolls them up per month, exactly. What it shows: the first reader outside the product, and the modulith sending to Kafka for the first time, the same messages as the services, checked by one contract.
+
+[mermaid]
+....
+flowchart LR
+  M[modulith] -->|same topic, same JSON| K[(Kafka)]
+  S[services] -->|same topic, same JSON| K
+  K --> L[analytics loader] --> D[("ff_logistics_analytics")]
+  C["ff-contracts"] -. checks .-> M & S
+....
+
+=== Delivering it
+
+*shared* first: the loader, then the contracts (`ff-contracts`), which the modulith's and the services' tests build against. Then *runtime* (the loader's Application, outside the switch, like `identity`), *modulith* (Kafka, and the topics) and *services* (the same contract check in their tests). Adding a module to shared's root `pom.xml` rebuilt `identity` too, twice: CI rebuilds every image when the build files change.
+
+=== Run it, switch, run it again
+
+The loader's first start, the data as a dashboard sees it, then a delivery on the modulith and the switch back: xref:try-analytics.adoc[Try it: analytics, from either side].
+

@@ -318,6 +318,31 @@ sequenceDiagram
 
 Both sides use the same bucket, with the same keys: the second thing they share, after the database. Without a store (`ff.storage.provider=reference-only`, the default outside the cluster), locations are still reserved, and links are refused with `503 object-store-unavailable`.
 
+[[events-out]]
+== Events out: analytics
+
+Until S6, events travelled between areas only. Analytics is the first reader outside the product: the analytics loader, built once in shared, reads delivered shipments from Kafka into a database of its own, `ff_logistics_analytics`. It runs whichever side is active, and both sides send it the same messages.
+
+[mermaid]
+....
+flowchart LR
+  M["modulith<br/>outbox: modulith"] --> T["ff.logistics.tms.shipment-delivered<br/>keyed by the shipment"]
+  S["transportation service<br/>outbox: transportation"] --> T
+  T --> L["analytics loader<br/>group: analytics"]
+  T --> W["warehousing service<br/>group: warehousing"]
+  L --> D[("ff_logistics_analytics<br/>shipment_deliveries<br/>tenant_delivery_monthly")]
+  L -. "never loads" .-> X["….analytics.dlt"]
+  C["ff-contracts<br/>one example per topic"] -. "checks what both send" .-> M & S
+  C -. "the loader reads the example" .-> L
+....
+
+* *The same messages from both sides.* The events marked `@Externalized` (`ShipmentDelivered`, `ShipmentProgressed`, `RouteStopCompleted`) go from each process's outbox to the same topics, keyed the same way. Both sides' tests read each message back from a broker in the test JVM and check it against its contract in `ff-contracts`: an example message per topic, its key, which fields may be `null`, and the formats of the ones a reader parses. A message must have exactly the contract's fields, so a new field is added to the contract first, and both sides add it (xref:decisions.adoc#d14[decision 14]).
+* *Loaded once.* The shipment id is the table's key, so a message read twice, or sent twice by an outbox, is stored once. A message that can never load (not JSON, a tenant id in the wrong form) goes to the loader's own dead-letter topic at once; a database that is down is waited for, without end, because a delivery set aside would be missing from every figure afterwards.
+* *Locked to the tenant.* Row-level security: the `analytics_reader` role, which dashboards will use (S8), sees only the rows of the tenant its session names (`SET app.tenant_id`), and nothing if it names none. It cannot call `set_config()`, so no statement can widen its own scope half way. The loader is not restricted: it connects as the server's owner.
+* *Rolled up per month.* `tenant_delivery_monthly` holds, per tenant and UTC month, the deliveries, their distance and the CO2e they saved. Storing a delivery marks its month in the same statement; the rollup recounts only marked months, from all their rows, so a late delivery comes out right and a second run changes nothing. The totals are exact decimals (`NUMERIC`), not doubles.
+* *Idempotent consumers make a switch safe.* While the modulith runs, its deliveries wait on Kafka for the services' consumers. After the switch back they read them, and find the work done: the arrival is already open (`ALREADY_OPEN`), the stop already delivered.
+* *History is what was published.* The loader's first start read every delivery on the topic, from the oldest. Deliveries the modulith made before S6 were never sent to Kafka, so analytics will never have them: a new reader sees only what was published.
+
 [[switch]]
 == The switch
 

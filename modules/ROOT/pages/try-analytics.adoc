@@ -1,0 +1,191 @@
+= Try it: analytics, from either side
+:description: S6 as numbered steps: the analytics loader's first start, row-level security as a dashboard sees it, exact monthly totals, and a delivery on each side of the switch landing in the same table.
+
+The analytics loader reads delivered shipments from Kafka into `ff_logistics_analytics` (xref:architecture.adoc#events-out[how]). This page deploys it, reads what it found, looks at the data as a dashboard will, then delivers a shipment on the modulith and switches back: the loader cannot tell the sides apart, and the services' consumers catch up without doing anything twice.
+
+The answers shown are from the first run, on 2026-11-21. The token setup is the one from xref:try-flows.adoc#setup[Try it: routing talks to transportation].
+
+[[deploy]]
+== 1. Deploy the loader
+
+`ff-root` creates the `analytics-loader` Application by itself; the workload is synced by hand.
+
+[source,bash]
+----
+argocd app sync analytics-loader && argocd app wait analytics-loader --health --timeout 300
+kubectl -n ff-logistics get jobs --sort-by=.metadata.creationTimestamp | grep analytics-loader
+kubectl -n ff-logistics logs job/$(kubectl -n ff-logistics get jobs -o name | grep analytics-loader-database | tail -1 | cut -d/ -f2)
+----
+
+✅ Three hook Jobs of one sync (one time in their names), then the database Job's log:
+
+----
+analytics-loader-database--presync-1795240529      Complete   1/1   3s    52s
+analytics-loader-migrate--presync-1795240529       Complete   1/1   23s   52s
+analytics-loader-smoke-test--postsync-1795240529   Complete   1/1   3s    18s
+CREATE DATABASE
+database ff_logistics_analytics is there
+----
+
+The loader is the first application with a database of its own, so the chart's database Job runs here for the first time: before the migration (weight `-1`), so Flyway finds the database it migrates. On the next sync it only says the database is there (xref:gitops.adoc#ui-loader[in the Argo CD UI]).
+
+[[found]]
+== 2. What it found on Kafka
+
+A new consumer group starts at the oldest message, so the loader's first start read every delivery ever sent to the topic.
+
+[source,bash]
+----
+A="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics_analytics -c"
+L="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c"
+$A "select shipment_number, tenant_id, total_distance_km as km, saved_co2e_kg as saved, delivered_at::timestamp(0) from shipment_deliveries order by delivered_at"
+$L "select shipment_number, tenant_id, delivered_at::timestamp(0) from tms_shipments where status = 'DELIVERED' order by delivered_at"
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh \
+  --bootstrap-server localhost:9092 --describe --group analytics
+----
+
+✅ Five rows in analytics, nine delivered shipments in the product, and the group caught up:
+
+----
+ shipment_number |   tenant_id   |  km  | saved  |    delivered_at
+-----------------+---------------+------+--------+---------------------
+ SHP-10005       | ff-eu-freight | 2575 | 1565.1 | 2026-11-20 12:46:26
+ SHP-10006       | ff-eu-freight | 2575 | 1565.1 | 2026-11-20 13:03:24
+ SHP-10007       | ff-eu-freight | 2575 | 1565.1 | 2026-11-20 13:06:36
+ SHP-10011       | ff-eu-freight | 9.87 |      0 | 2026-11-20 23:41:26
+ SHP-10012       | ff-eu-freight | 9.87 |      0 | 2026-11-20 23:42:56
+
+ shipment_number |   tenant_id   |    delivered_at
+-----------------+---------------+---------------------
+ SHP-10001       | ff-eu-freight | 2026-11-20 12:11:06
+ SHP-10002       | ff-eu-freight | 2026-11-20 12:12:40
+ SHP-10003       | ff-eu-freight | 2026-11-20 12:36:40
+ SHP-10004       | ff-eu-freight | 2026-11-20 12:38:32
+ SHP-10005 … SHP-10012 as above
+
+GROUP      TOPIC                               PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG
+analytics  ff.logistics.tms.shipment-delivered 0          3               3               0
+analytics  ff.logistics.tms.shipment-delivered 1          -               0               -
+analytics  ff.logistics.tms.shipment-delivered 2          2               2               0
+----
+
+The cut is between 12:38 and 12:46 on 2026-11-20: S4's switch from the modulith to the services. SHP-10001 to 10004 were delivered on the modulith, which had no Kafka then; every delivery after the switch went through transportation's outbox. Five rows, five messages (3 + 2). SHP-10011 and 10012 were delivered by a route stop, an all-road trip: no CO2e saved against a road baseline.
+
+[[reader]]
+== 3. The data as a dashboard sees it
+
+Dashboards (S8) connect as `analytics_reader`, which row-level security restricts to the tenant its session names.
+
+[source,bash]
+----
+R="kubectl -n ff-logistics exec deploy/postgres -- env PGPASSWORD=analyticsReader2026 psql -h 127.0.0.1 -U analytics_reader -d ff_logistics_analytics"
+$R -c "select count(*) as no_tenant_named from shipment_deliveries"
+$R -c "set app.tenant_id = 'ff-eu-freight'" -c "select count(*) as as_ff_eu_freight from shipment_deliveries"
+$R -c "select set_config('app.all_tenants', 'on', false), count(*) from shipment_deliveries"
+----
+
+✅ Nothing without a tenant, the tenant's five rows with one, and the third statement refused:
+
+----
+ no_tenant_named
+-----------------
+               0
+SET
+ as_ff_eu_freight
+------------------
+                5
+ERROR:  permission denied for function set_config
+command terminated with exit code 1
+----
+
+`SET` is a statement of its own: it chooses the rows before the query runs. `set_config()` inside a query could change the setting half way, and the rows read after the call would be checked against the new value. A chart's own SQL expression in a dashboard is such a query, so no role but a superuser may call it in this database (`V2`). `exit code 1` is psql's, passed on by `kubectl exec`.
+
+[[monthly]]
+== 4. The monthly figures, exactly
+
+[source,bash]
+----
+$A "select tenant_id, delivery_month, delivered_shipments, total_distance_km, saved_co2e_kg from tenant_delivery_monthly"
+----
+
+✅ After S06-02, as doubles; after S06-04, as exact decimals:
+
+----
+ ff-eu-freight | 2026-11-01 | 5 | 7744.74  | 4695.299999999999
+ ff-eu-freight | 2026-11-01 | 5 | 7744.740 | 4695.300
+----
+
+A double cannot hold 1565.1 exactly, so three of them added up to `4695.299999999999`. `V4` turned the columns into `NUMERIC(12,3)` and marked the month again; the rollup recounted it at the loader's start.
+
+[[modulith]]
+== 5. A delivery on the modulith
+
+Switch to the modulith (xref:switching.adoc[Switching sides]): `active: modulith`, then `argocd app sync logistics-app` and `argocd app sync edge`. Then a shipment to the Hadimkoy hub, delivered:
+
+[source,bash]
+----
+SHP=$(curl -s "${H[@]}" $E/api/v1/tms/shipments -d '{"consignorName":"Rhein Parts GmbH",
+  "consigneeName":"Istanbul Hadimkoy Hub","destinationGln":"8690001000011",
+  "equipmentCode":"CSQU3054383","sscc":"106141411234567897","incoterm":"DAP",
+  "origin":"Cologne Eifeltor","destination":"Istanbul Hadimkoy","grossWeightKg":18000,
+  "legs":[{"mode":"ROAD","origin":"Cologne Eifeltor","destination":"Istanbul Hadimkoy","distanceKm":2580,"carrierReference":"TR-34-FF-0417"}]}')
+ID=$(echo "$SHP" | jq -r .id); NUM=$(echo "$SHP" | jq -r .shipmentNumber); echo "$NUM $ID"
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID/pickup > /dev/null
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$ID/departure > /dev/null
+curl -s "${H[@]}" $E/api/v1/tms/shipments/$ID/delivery -d '{"receivedBy":"Dock 2, A. Yilmaz"}' | jq -r .status
+sleep 3
+$A "select shipment_number, total_distance_km, saved_co2e_kg, delivered_at::timestamp(0), loaded_at::timestamp(0) from shipment_deliveries where shipment_number = '$NUM'"
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group warehousing 2>/dev/null | grep -E "GROUP|shipment-delivered"
+----
+
+✅ The modulith's delivery in analytics, loaded in the same second, and a message waiting for the services' warehousing:
+
+----
+SHP-10013 d23e698a-1967-4709-bec8-230f34bc817c
+DELIVERED
+ shipment_number | total_distance_km | saved_co2e_kg |    delivered_at     |      loaded_at
+-----------------+-------------------+---------------+---------------------+---------------------
+ SHP-10013       |          2580.000 |         0.000 | 2026-11-21 07:07:28 | 2026-11-21 07:07:28
+
+GROUP        TOPIC                               PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  CONSUMER-ID
+warehousing  ff.logistics.tms.shipment-delivered 0          3               3               0    -
+warehousing  ff.logistics.tms.shipment-delivered 2          2               3               1    -
+----
+
+A row that could not exist before S6: a delivery made on the modulith, seen outside it. The loader read it as it read SHP-10005 from the services: the same topic, the same JSON, checked by the same contract (xref:decisions.adoc#d14[decision 14]). The modulith opened the warehouse's arrival itself, in-process; the same message waits on partition 2 for the services' warehousing consumer, which is not running.
+
+[[switch-back]]
+== 6. Back to the services: the waiting message
+
+Switch back: `active: services`, sync the four services' Applications, then the edge.
+
+[source,bash]
+----
+$L "select shipment_number, status, created_at::timestamp(0), updated_at::timestamp(0) from wms_inbound_arrivals where shipment_number = 'SHP-10013'"
+kubectl -n ff-logistics exec kafka-0 -- /opt/kafka/bin/kafka-consumer-groups.sh --bootstrap-server localhost:9092 \
+  --describe --group warehousing 2>/dev/null | grep -E "GROUP|shipment-delivered"
+----
+
+✅ One arrival, as the modulith left it, and the message read:
+
+----
+ shipment_number | status |     created_at      |     updated_at
+-----------------+--------+---------------------+---------------------
+ SHP-10013       | OPEN   | 2026-11-21 07:07:28 | 2026-11-21 07:07:28
+
+GROUP        TOPIC                               PARTITION  CURRENT-OFFSET  LOG-END-OFFSET  LAG  HOST
+warehousing  ff.logistics.tms.shipment-delivered 0          3               3               0    /10.42.0.206
+warehousing  ff.logistics.tms.shipment-delivered 1          -               0               -    /10.42.0.206
+warehousing  ff.logistics.tms.shipment-delivered 2          3               3               0    /10.42.0.207
+----
+
+The services' warehousing read the message the modulith had sent and tried to open the same arrival: the unique key on the shipment answered `ALREADY_OPEN`, and nothing changed (`updated_at` is the modulith's moment). The two pods share the topic's partitions.
+
+[[lessons]]
+== What the run showed
+
+* *Either side, one table.* A delivery on the modulith and one on the services land in `shipment_deliveries` the same way; the loader does not know, and has no way to know, which side sent them.
+* *A new reader sees only what was published.* Deliveries made before S6 on the modulith never reached Kafka, so analytics will never have them. Publishing an event is what makes history available to readers that do not exist yet.
+* *Idempotent consumers make a switch safe.* Messages wait on Kafka for the side that is not running, and are read after the switch. Every consumer must survive reading a message whose work is already done.
+* *Exact means `NUMERIC`.* Floating point is fine for a chart and wrong for a total someone will add up by hand.
