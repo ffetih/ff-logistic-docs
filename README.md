@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S4, the first flow between areas**. A shipment delivered to a warehouse opens an inbound arrival there: through an in-process event in the modulith, through Kafka between the services, both through an outbox in each process's own schema. Warehousing and transportation run on either side from one core each. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
+> Status: **S5, routing joins**. A third area, routing (route plans optimized with Timefold), talks to transportation both ways: a question (a road leg's distance, with a fallback when routing does not answer) and an event (a completed route stop delivers its shipment, which then opens an arrival at the warehouse: three areas from one stop). Documents (e-CMR, proof of delivery) are stored write-once in RustFS through presigned links. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
 
 ---
 
@@ -125,7 +125,7 @@ flowchart BT
 | :--- | :--- |
 | Language, framework | Java 25, Spring Boot 4.1, Spring Modulith 2.1 |
 | Data | PostgreSQL 17, Flyway, Hibernate; row-level security for analytics |
-| Messaging | Apache Kafka 4.2 (KRaft) between the services; a transactional outbox in each service (Spring Modulith's event publication registry); in-process events inside the modulith |
+| Messaging | Apache Kafka 4.2 (KRaft) between the services; a transactional outbox in every process (Spring Modulith's event publication registry), delivering in-process inside the modulith |
 | Identity | Keycloak behind a small identity facade; services verify JWTs locally against its JWKS |
 | Optimization | Timefold Solver, OSRM |
 | Objects | RustFS (S3 API), presigned write-once links |
