@@ -1,0 +1,235 @@
+= Try it: documents, written once
+:description: S05-05 as numbered steps: a shipment's e-CMR and a route stop's proof of delivery stored in RustFS through presigned links, and the three refusals that keep them written once.
+
+Two documents are files, not rows: a shipment's signed *e-CMR* (a PDF, kept by transportation) and a route stop's *proof of delivery* (the consignee's signature, a PNG, kept by routing). They live in RustFS, through the S3 API (xref:architecture.adoc#documents[how]).
+
+The application never touches the bytes. It writes a *permission slip*, a presigned link: "you may put one PDF in this drawer, within 15 minutes, only if the drawer is empty". The client takes the file straight to the store, and the store checks the slip.
+
+[mermaid]
+....
+flowchart LR
+  C[client] -->|"1. POST …/upload-link"| A["transportation<br/>signs the slip"]
+  A -->|"PUT url, 15 min,<br/>Content-Type, If-None-Match: *"| C
+  C -->|"2. PUT the file + the slip"| S["RustFS<br/>localhost:9000"]
+....
+
+Run one block at a time and compare its answer with the ✅ line. The answers shown are from the first run, on 2026-11-21, on the services side. The shipment is `SHP-10011` and the route `RTE-5003` from xref:try-flows.adoc#flow-3[Try it: routing talks to transportation]; any shipment and route stop of your own will do.
+
+[[deploy]]
+== 1. Deploy, and check the migrations
+
+[source,bash]
+----
+argocd app sync routing && argocd app wait routing --health --timeout 300
+argocd app sync transportation && argocd app wait transportation --health --timeout 300
+PSQL="kubectl -n ff-logistics exec deploy/postgres -- psql -U fflogistics -d ff_logistics -c"
+$PSQL "select 'routing' area, version, description from routing_flyway_history where version::int >= 3
+       union all select 'transportation', version, description from transportation_flyway_history where version::int >= 3"
+----
+
+✅ Both applications `Healthy`, and the two `V4` migrations, a column each for the document's location:
+
+----
+      area      | version |          description
+----------------+---------+-------------------------------
+ routing        | 3       | routing stop completion
+ routing        | 4       | routing epod document
+ transportation | 3       | transportation leg distances
+ transportation | 4       | transportation ecmr document
+----
+
+`argocd: token is expired`: `argocd relogin` (xref:runtime::cluster-guide.adoc#sessions[sessions]).
+
+[[slip]]
+== 2. Ask for the slip
+
+[source,bash]
+----
+E=localhost:8081
+TOKEN=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+H=(-H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json')
+SID=$(curl -s "${H[@]}" $E/api/v1/tms/shipments | jq -r '.[] | select(.shipmentNumber=="SHP-10011") | .id')
+echo "SID=$SID"
+LINK=$(curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$SID/ecmr/upload-link)
+echo "$LINK" | jq '{method, validForSeconds, contentType, headers, url: (.url | split("?")[0])}'
+echo "$LINK" | jq -r .url | tr '?&' '\n\n' | cut -c1-60
+----
+
+✅ The slip, then its signature, one part per line:
+
+----
+{
+  "method": "PUT",
+  "validForSeconds": 900,
+  "contentType": "application/pdf",
+  "headers": {
+    "If-None-Match": "*",
+    "Content-Type": "application/pdf"
+  },
+  "url": "http://localhost:9000/ff-documents/ff-eu-freight/ecmr/shp-10011/ecmr.pdf"
+}
+X-Amz-Algorithm=AWS4-HMAC-SHA256
+X-Amz-Date=20261121T003911Z
+X-Amz-SignedHeaders=content-type%3Bhost%3Bif-none-match
+X-Amz-Credential=fflogistics%2F20261121%2Fus-east-1%2Fs3%2Fa
+X-Amz-Expires=900
+X-Amz-Signature=232db327a261f2dba6be3398fbf4873b95ee052102cd
+----
+
+[cols="2,5",options="header"]
+|===
+| Part | What it says
+
+| `localhost:9000`
+| The host's address of RustFS. The service itself talks to `rustfs-svc:9000` inside the cluster, but it signs a link the client can reach: a presigned link includes its host.
+
+| `ff-documents/ff-eu-freight/`
+| The bucket, then the tenant's prefix: a link is signed only under the caller's own tenant.
+
+| `ecmr/shp-10011/ecmr.pdf`
+| The key, under the thing the document proves, the shipment. Lower case, so the key is the same whatever case a caller used.
+
+| `X-Amz-Date`, `X-Amz-Expires`
+| Signed at 00:39:11 UTC, valid 900 s: until 00:54:11.
+
+| `X-Amz-Credential`
+| Who signed: the access key from the `rustfs-credentials` Secret, for that day, region and service. The secret key is never in the link, only the signature made with it.
+
+| `X-Amz-SignedHeaders`
+| `content-type;host;if-none-match` (`%3B` is `;`): the write-once rule is part of the signature.
+|===
+
+[[upload]]
+== 3. Upload the PDF
+
+[source,bash]
+----
+printf '%%PDF-1.4\n%% FF Logistic e-CMR SHP-10011\n' > /tmp/ecmr.pdf
+URL=$(echo "$LINK" | jq -r .url)
+curl -s -o /dev/null -w "upload %{http_code}\n" -X PUT -T /tmp/ecmr.pdf \
+  -H "Content-Type: application/pdf" -H "If-None-Match: *" "$URL"
+----
+
+✅ `upload 200`. The file went from the terminal to RustFS; transportation was not on the way.
+
+`403`: the slip expired, or a header differs from the signed one. Ask for a new slip (step 2's `LINK=` line): nothing is stored yet, so a new one is given.
+
+[[refusals]]
+== 4. Write it a second time, three ways
+
+[source,bash]
+----
+curl -s -w "\nnew link %{http_code}\n" -X POST "${H[@]}" $E/api/v1/tms/shipments/$SID/ecmr/upload-link
+printf '%%PDF-1.4\n%% a forged second e-CMR\n' > /tmp/forged.pdf
+curl -s -w "\nold link %{http_code}\n" -X PUT -T /tmp/forged.pdf \
+  -H "Content-Type: application/pdf" -H "If-None-Match: *" "$URL"
+curl -s -o /dev/null -w "old link, no If-None-Match %{http_code}\n" -X PUT -T /tmp/forged.pdf \
+  -H "Content-Type: application/pdf" "$URL"
+----
+
+✅ Three refusals, by three different guards:
+
+----
+{"detail":"This document has already been uploaded and cannot be replaced","instance":"/api/v1/tms/shipments/ebfb2f25-…/ecmr/upload-link","status":409,"title":"Document Already Stored","type":"urn:siose-ff:problem:document-already-stored","timestamp":"2026-11-21T00:42:59.779739837Z"}
+new link 409
+<?xml version="1.0" encoding="UTF-8"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>
+old link 412
+old link, no If-None-Match 403
+----
+
+[cols="2,2,4",options="header"]
+|===
+| Try | Who refuses | Why
+
+| A new slip
+| transportation, `409`
+| It looks in the store first. The answer is the project's problem format, like every other error.
+
+| The old slip
+| RustFS, `412`
+| `If-None-Match: *` means "only if nothing is there": something is. This guard matters for whoever already holds a valid slip, and never asks the service again.
+
+| The old slip without the rule
+| the signature, `403`
+| The request no longer matches what was signed. The rule cannot be left out.
+|===
+
+[[download]]
+== 5. Download it, and compare
+
+[source,bash]
+----
+DL=$(curl -s "${H[@]}" $E/api/v1/tms/shipments/$SID/ecmr/download-link)
+echo "$DL" | jq '{method, validForSeconds, headers}'
+curl -s "$(echo "$DL" | jq -r .url)" -o /tmp/ecmr-back.pdf -w "download %{http_code}\n"
+cat /tmp/ecmr-back.pdf
+sha256sum /tmp/ecmr.pdf /tmp/ecmr-back.pdf /tmp/forged.pdf | cut -c1-16,65-
+----
+
+✅ The original came back, and the forged file never got in:
+
+----
+{
+  "method": "GET",
+  "validForSeconds": 900,
+  "headers": {}
+}
+download 200
+%PDF-1.4
+% FF Logistic e-CMR SHP-10011
+3b7afc3b645f8efd  /tmp/ecmr.pdf
+3b7afc3b645f8efd  /tmp/ecmr-back.pdf
+c0bed9e66d24b63b  /tmp/forged.pdf
+----
+
+A download slip carries no headers: reading changes nothing, so there is no rule to sign. Before the upload, the download link is refused with `404`.
+
+[[epod]]
+== 6. The proof of delivery, on routing's side
+
+The same mechanism, another owner: the consignee's signature belongs to a route stop, so routing signs the slip. One block, the steps above in a row. `/tmp/sign.png` is a real 1×1 PNG, standing in for a signature taken on the driver's handheld.
+
+[source,bash]
+----
+RID=$(curl -s "${H[@]}" $E/api/v1/geo/routes | jq -r '.[] | select(.routeNumber=="RTE-5003") | .id')
+echo "RID=$RID"
+echo 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==' | base64 -d > /tmp/sign.png
+P=$(curl -s -X POST "${H[@]}" $E/api/v1/geo/routes/$RID/stops/IST-ESN/epod/upload-link)
+echo "$P" | jq '{method, contentType, headers, url: (.url | split("?")[0])}'
+curl -s -o /dev/null -w "upload %{http_code}\n" -X PUT -T /tmp/sign.png \
+  -H "Content-Type: image/png" -H "If-None-Match: *" "$(echo "$P" | jq -r .url)"
+curl -s -o /dev/null -w "new link %{http_code}\n" -X POST "${H[@]}" $E/api/v1/geo/routes/$RID/stops/IST-ESN/epod/upload-link
+G=$(curl -s "${H[@]}" $E/api/v1/geo/routes/$RID/stops/IST-ESN/epod/download-link)
+curl -s "$(echo "$G" | jq -r .url)" -o /tmp/sign-back.png -w "download %{http_code}\n"
+sha256sum /tmp/sign.png /tmp/sign-back.png | cut -c1-16,65-
+----
+
+✅
+
+----
+RID=affc378a-1bd9-4d24-8084-aac861af7dc9
+{
+  "method": "PUT",
+  "contentType": "image/png",
+  "headers": {
+    "Content-Type": "image/png",
+    "If-None-Match": "*"
+  },
+  "url": "http://localhost:9000/ff-documents/ff-eu-freight/epod/rte-5003-ist-esn/signature.png"
+}
+upload 200
+new link 409
+download 200
+497790947d466676  /tmp/sign.png
+497790947d466676  /tmp/sign-back.png
+----
+
+Each document is filed under what it proves: the e-CMR under the shipment (`ecmr/<shipment>/`), the proof of delivery under one stop of one route (`epod/<route>-<stop>/`).
+
+[[lessons]]
+== What the run showed
+
+* *Write-once holds at both doors.* The service refuses a new slip, and the store refuses an old one. RustFS honours `If-None-Match: *` on a `PUT`; a store that ignored it would have let the forged file replace the original, with only the service's check left.
+* *The signature binds the rules.* Leaving out the header is not a way round it: `403`.
+* *The application stays out of the byte path.* Neither service read or wrote a byte of either file; each signed two links and kept a location in its own table.

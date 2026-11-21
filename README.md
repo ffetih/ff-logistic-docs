@@ -125,7 +125,7 @@ flowchart BT
 | :--- | :--- |
 | Language, framework | Java 25, Spring Boot 4.1, Spring Modulith 2.1 |
 | Data | PostgreSQL 17, Flyway, Hibernate; row-level security for analytics |
-| Messaging | Apache Kafka 4.2 (KRaft), transactional outbox through the Spring Modulith event registry |
+| Messaging | Apache Kafka 4.2 (KRaft) between the services; a transactional outbox in each service (Spring Modulith's event publication registry); in-process events inside the modulith |
 | Identity | Keycloak behind a small identity facade; services verify JWTs locally against its JWKS |
 | Optimization | Timefold Solver, OSRM |
 | Objects | RustFS (S3 API), presigned write-once links |

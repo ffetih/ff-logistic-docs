@@ -350,3 +350,7 @@ Then the two flows: transportation asks routing for a road leg's distance (flow 
 The routing service gained an outbox of its own (schema `routing`) and a topic; the transportation service, a consumer. Deliver: shared, then modulith and services, then docs. Deploy on the services side: routing first (it creates the topic), then transportation (it reads it).
 
 Steps and the first run's answers: xref:try-flows.adoc[Try it: routing talks to transportation], with the drill where routing is down.
+
+=== Documents
+
+A shipment's signed e-CMR (a PDF) and a route stop's proof of delivery (a PNG) are stored in RustFS through presigned links: the service signs a slip, the client takes the file straight to the store, and nothing can be written twice (xref:architecture.adoc#documents[how]). Steps, and the three refusals that keep a document written once: xref:try-documents.adoc[Try it: documents, written once].

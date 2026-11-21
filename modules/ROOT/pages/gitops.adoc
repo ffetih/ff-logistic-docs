@@ -302,9 +302,9 @@ A hook is a resource with the annotation `argocd.argoproj.io/hook`. Argo CD does
 [mermaid]
 ....
 flowchart LR
-  P["PreSync<br/>routing-migrate-xxxxx<br/>Flyway, then exits"] -->|Completed| S["Sync<br/>ConfigMap, Services,<br/>AnalysisTemplate, Rollout"]
+  P["PreSync<br/>routing-migrate--presync-…<br/>Flyway, then exits"] -->|Completed| S["Sync<br/>ConfigMap, Services,<br/>AnalysisTemplate, Rollout"]
   S --> C["Canary<br/>50 % → AnalysisRun → 100 %"]
-  C -->|Healthy| Q["PostSync<br/>routing-smoke-test-xxxxx<br/>three checks"]
+  C -->|Healthy| Q["PostSync<br/>routing-smoke-test--postsync-…<br/>three checks"]
   Q -->|Completed| OK([sync Succeeded])
   P -->|Failed| F1(["sync Failed<br/>nothing applied, the old pods serve"])
   C -->|analysis Failed| F2(["Rollout aborted, Degraded<br/>PostSync never runs"])
@@ -316,22 +316,22 @@ flowchart LR
 | Hook | Job | What it does | If it fails
 
 | PreSync, weight `-1`
-| `<service>-database-…`
+| `<service>-database--presync-…`
 | Creates the service's own database on the PostgreSQL server, if missing (`database.create`).
 | In the chart, but off for every service here: they all use `ff_logistics` (xref:decisions.adoc#d3[decision 3]).
 
 | PreSync
-| `<service>-migrate-…`
+| `<service>-migrate--presync-…`
 | The service's own image with the Spring profile `migrate`: Flyway migrates the area's tables, records them in `<area>_flyway_history`, and the process exits.
 | The sync fails before anything else is applied. No new pod ever starts on a schema it does not have.
 
 | PostSync
-| `<service>-smoke-test-…`
+| `<service>-smoke-test--postsync-…`
 | `curl` in a shell script: readiness `UP`; `/api/v1/me` refused (`401`) without a token, `200` with one, for the tenant `ff-eu-freight`.
 | The sync is marked `Failed`. Nothing is rolled back: the failure is the signal to look. `backoffLimit: 0`, because a smoke test that only passes on a second try has failed.
 
 | PostSync
-| `edge-smoke-test-…`
+| `edge-smoke-test--postsync-…`
 | The same kind of checks through the edge, after the edge Application's sync.
 | As above.
 |===
@@ -340,7 +340,7 @@ Four things that are easy to miss:
 
 * *The migration runs while the old version serves.* The old pods keep taking traffic during PreSync and the canary, so a migration has to suit both versions: add, don't rename or drop in the same release. S05-05's `V4` adds a nullable column, `ecmr_document_uri`, which the old code never reads.
 * *PostSync waits for the canary.* It runs once every resource is `Healthy`. A Rollout in its canary steps is `Progressing`, so the smoke test checks the version that already takes all the traffic. An aborted canary never becomes `Healthy`, so the test never runs on it.
-* *A new name on every sync* (`generateName`): Argo CD watches this sync's Job, never one left from the sync before. That is why the UI shows several anchored Jobs side by side, one per sync of the day.
+* *A new name on every sync* (`generateName`): Argo CD watches this sync's Job, never one left from the sync before. Argo CD builds the name itself: the chart's prefix (which ends in a dash, hence the double dash), the hook type and the sync's time in Unix seconds. `transportation-smoke-test--postsync-1795221030` is the smoke test of the sync at 03:30:30 on 2026-11-21, Istanbul time. That is why the UI shows several anchored Jobs side by side, one pair per sync of the day, and why a name tells which sync made it.
 * *Kubernetes deletes them, not Argo CD*: `ttlSecondsAfterFinished: 86400`, a day to read a failed run's log. The checks themselves are a plain ConfigMap with a tick, applied in the sync phase, so the PostSync Job reads the checks of the commit being synced.
 
 Read the last two Jobs of a sync:
