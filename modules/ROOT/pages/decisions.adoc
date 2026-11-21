@@ -103,3 +103,11 @@ Decision:: Yes: stay with six repositories, and make the delivery cheaper instea
 Costs:: A sprint across repositories is several pull requests, merged in order. One front door is needed, so a reader does not meet six repositories at once: this site, linked from every README.
 Considered:: Merging into one repository, keeping each history (`git subtree`): one pull request per change, the build order handled by Maven; about a sprint of work on CI, Argo CD paths and the site, and the boundaries become conventions. To be reconsidered if, with the delivery automated, it still costs more than the features.
 
+[[d14]]
+== 14. Event contracts as example messages in shared
+
+Problem:: In S6 the modulith starts sending the events the services send, and a reader outside both, the analytics loader, must not be able to tell them apart. Both sides serialize the same shared records today, so they agree; nothing keeps them agreeing when a field, a type or a key changes on one side.
+Decision:: A small library in shared, `ff-contracts`: one file per topic with an example message, the field the message is keyed by, the fields that may be `null`, and the formats of the fields a reader parses (`uuid`, `instant`). `EventContract.verify(key, message)` lists everything wrong with a message. Every producer's test, in the modulith and in each service, sends a real event through a broker in its JVM, reads it back and verifies it; the loader's test parses the same example. A message must have exactly the contract's fields: a new field goes into the contract first.
+Costs:: A field is written in two places, the record and the contract. Old messages on a topic are not checked: the contract describes what is sent from now on.
+Considered:: A schema registry (Avro or JSON Schema with Confluent's or Apicurio's): checks at send time and versions the schemas, but one more service to run, and every client gains a serializer and a registry address. Pact, consumer-driven contracts: a broker for the pacts and a verification step per pair; fits many teams and many readers, more than one loader and two producers. Comparing the two sides' messages in one test: no build has both sides in it.
+

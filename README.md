@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S5, routing joins**. A third area, routing (route plans optimized with Timefold), talks to transportation both ways: a question (a road leg's distance, with a fallback when routing does not answer) and an event (a completed route stop delivers its shipment, which then opens an arrival at the warehouse: three areas from one stop). Documents (e-CMR, proof of delivery) are stored write-once in RustFS through presigned links. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
+> Status: **S6, events out**. The analytics loader reads delivered shipments from Kafka into a database of its own, locked to the tenant with row-level security and rolled up per month, exactly. The modulith now sends the same events to Kafka as the services, checked by one contract test in shared (`ff-contracts`): a delivery made on either side lands in the same table, and the loader cannot tell which side sent it. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
 
 ---
 

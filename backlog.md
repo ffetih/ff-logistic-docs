@@ -226,19 +226,25 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
 - [x] **S05-08 Explain a request without a body** · base
   An empty or unreadable request body was answered `400` with no title and no detail (seen in S5's flow-1 run). Now `missing-body` or `unreadable-body`, with the property and the place the parser stopped, from `ff-base-web`'s problem handler. The first version guessed the parser's message format; the second reads Jackson's exception ("Try it: routing talks to transportation", step 7).
 
-- [ ] **S05-09 Wrap long lines in code blocks** · docs
-  Commands and answers on the "Try it" pages scroll sideways in the site's narrow column. A few lines of CSS in `supplemental-ui` would wrap them on screen only; copying keeps the original line. Check it against the UI bundle's templates in a local build.
+- [x] **S05-09 Wrap long lines in code blocks** · docs
+  Not done in S5: moved to S06-06.
 
 ## S6 — Events out and analytics
 
-- [ ] **S06-01 Port the analytics loader** · shared
-  The loader, its database, the dead-letter topic.
+- [x] **S06-01 Port the analytics loader** · shared, runtime
+  The loader, its database, the dead-letter topic. Named like the services' consumers: group `analytics`, dead-letter topic `….analytics.dlt`. It waits for its database without end instead of setting a delivery aside. Its own database, `ff_logistics_analytics`, is the first use of the chart's database Job.
   Port: `platform/ff-analytics/analytics-loader` (S08-03 of the reference).
-- [ ] **S06-02 Lock the analytics tables to the tenant and roll them up per month** · shared, runtime
-  Port: S08-04 and S08-05 of the reference.
-- [ ] **S06-03 Publish the same events from both sides, checked by one contract test** · shared, modulith, services
-  The topic names and message examples live in shared; both sides run the same contract test against what they publish.
-  Done when: a delivery made on either side lands in `shipment_deliveries`, and the loader cannot tell which side sent it.
+- [x] **S06-02 Lock the analytics tables to the tenant and roll them up per month** · shared
+  Port: S08-04 and S08-05 of the reference. The tests that need PostgreSQL run against a container, or a server named by `ANALYTICS_TEST_DB_URL`; skipped with neither.
+- [x] **S06-03 Publish the same events from both sides, checked by one contract test** · shared, modulith, services
+  The topic names and message examples live in shared (`ff-contracts`, decision 14); both sides run the same contract test against what they publish.
+  Done when: a delivery made on either side lands in `shipment_deliveries`, and the loader cannot tell which side sent it. Shown with SHP-10013, delivered on the modulith.
+- [x] **S06-04 Keep the analytics totals exact** · shared
+  Seen on the cluster: three deliveries of 1565.1 kg summed to 4695.299999999999 as doubles. Distances and CO2e are `NUMERIC(12,3)` now, the monthly sums `NUMERIC(15,3)`, and `V4` has every month recounted.
+- [ ] **S06-05 Rebuild only the image a new module adds** · runtime
+  A new module in a repository's root `pom.xml` rebuilds every image of that repository (shared's `identity`, twice in S6). The change detection could tell a new module from a changed build.
+- [ ] **S06-06 Wrap long lines in code blocks** · docs
+  Carried over from S05-09.
 
 ## S7 — The comparison
 

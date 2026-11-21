@@ -318,7 +318,7 @@ flowchart LR
 | PreSync, weight `-1`
 | `<service>-database--presync-…`
 | Creates the service's own database on the PostgreSQL server, if missing (`database.create`).
-| In the chart, but off for every service here: they all use `ff_logistics` (xref:decisions.adoc#d3[decision 3]).
+| Off for the business services: they all use `ff_logistics` (xref:decisions.adoc#d3[decision 3]). On for the analytics loader, the first application with a database of its own, `ff_logistics_analytics` (S6, xref:#ui-loader[below]).
 
 | PreSync
 | `<service>-migrate--presync-…`
@@ -362,6 +362,19 @@ ok   GET /actuator/health/readiness (none): 200
 ok   GET /api/v1/me (none): 401
 ok   GET /api/v1/me (token): 200
 ----
+
+[[ui-loader]]
+=== analytics-loader: all three hooks
+
+image::argocd/analytics-loader.png[analytics-loader: a Service, a Deployment with one pod, the smoke test's ConfigMap, and three anchored Jobs: database, migrate, smoke-test]
+
+The first application with every hook the chart has (S6):
+
+* *Three anchored Jobs from one sync*, in order: `database--presync` (weight `-1`) creates `ff_logistics_analytics` if it is missing, `migrate--presync` (weight `0`) runs the loader's own Flyway scripts in it, and `smoke-test--postsync` checks readiness once the pod is up. Their names end in the same time, `1795240529`: one sync.
+* *Their pods say `completed` and `0/1`*: a finished Job keeps its pod, stopped, so its log can be read for a day.
+* *A Deployment with one pod, not a Rollout*: the loader takes no requests, so there is no traffic to split for a canary. When a new pod starts, Kafka hands it the partitions the old one held.
+* *Not part of the switch*: no `ff-logistic/implementation` label. Like `identity`, it runs whichever side is active, because it reads the topics, not the code, of the side that sends them.
+* *Synced to `2fce04f`, "Merge pull request #12 from ffetih/sprint/s06"*: the commit in runtime that added this Application. `and (1) more` is the values from shared, where the loader is built.
 
 [[ui-platform]]
 === kafka, keycloak, postgres, rustfs: the platform
