@@ -94,7 +94,7 @@ X-Amz-Signature=232db327a261f2dba6be3398fbf4873b95ee052102cd
 | Signed at 00:39:11 UTC, valid 900 s: until 00:54:11.
 
 | `X-Amz-Credential`
-| Who signed: the access key from the `rustfs-credentials` Secret, for that day, region and service. The secret key is never in the link, only the signature made with it.
+| Who signed: the access key from the `rustfs-credentials` Secret, for that day, region and service (`cut` shortened the line: it ends in `s3%2Faws4_request`). The secret key is never in the link, only the signature made with it.
 
 | `X-Amz-SignedHeaders`
 | `content-type;host;if-none-match` (`%3B` is `;`): the write-once rule is part of the signature.
@@ -120,7 +120,7 @@ curl -s -o /dev/null -w "upload %{http_code}\n" -X PUT -T /tmp/ecmr.pdf \
 
 [source,bash]
 ----
-curl -s -w "\nnew link %{http_code}\n" -X POST "${H[@]}" $E/api/v1/tms/shipments/$SID/ecmr/upload-link
+curl -s -X POST "${H[@]}" $E/api/v1/tms/shipments/$SID/ecmr/upload-link | jq '{status, title, detail, type}'
 printf '%%PDF-1.4\n%% a forged second e-CMR\n' > /tmp/forged.pdf
 curl -s -w "\nold link %{http_code}\n" -X PUT -T /tmp/forged.pdf \
   -H "Content-Type: application/pdf" -H "If-None-Match: *" "$URL"
@@ -131,8 +131,12 @@ curl -s -o /dev/null -w "old link, no If-None-Match %{http_code}\n" -X PUT -T /t
 ✅ Three refusals, by three different guards:
 
 ----
-{"detail":"This document has already been uploaded and cannot be replaced","instance":"/api/v1/tms/shipments/ebfb2f25-…/ecmr/upload-link","status":409,"title":"Document Already Stored","type":"urn:siose-ff:problem:document-already-stored","timestamp":"2026-11-21T00:42:59.779739837Z"}
-new link 409
+{
+  "status": 409,
+  "title": "Document Already Stored",
+  "detail": "This document has already been uploaded and cannot be replaced",
+  "type": "urn:siose-ff:problem:document-already-stored"
+}
 <?xml version="1.0" encoding="UTF-8"?><Error><Code>PreconditionFailed</Code><Message>At least one of the pre-conditions you specified did not hold</Message></Error>
 old link 412
 old link, no If-None-Match 403
