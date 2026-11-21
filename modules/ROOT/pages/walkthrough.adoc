@@ -377,3 +377,10 @@ flowchart LR
 
 The loader's first start, the data as a dashboard sees it, then a delivery on the modulith and the switch back: xref:try-analytics.adoc[Try it: analytics, from either side].
 
+[[s7]]
+== S7: the first numbers
+
+What exists: a load script in runtime. It runs this walkthrough as a k6 scenario against the edge, and a second terminal can stop one part while the users run. What it shows, so far on the services side only: what five users see, what the pods cost, and where a minute without Kafka waits. The modulith is the same command, not run yet.
+
+The first run: xref:try-load.adoc[Try it: a load, with Kafka away].
+

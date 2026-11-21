@@ -254,8 +254,10 @@ Goal: numbers instead of opinions.
   k6 in the cluster: the walkthrough as a scenario, run against whichever side is active.
 - [ ] **S07-02 Measure both sides** · docs
   Memory at rest and under load, startup to ready, p50/p95 per request type, pods and CPU.
+  Services side, 2026-11-21, recorded in `try-load`: five users, four minutes, 0% failed. Startup not measured. The modulith is still open.
 - [ ] **S07-03 Run the failure drills on both sides** · docs
   Database away, Kafka away, one area away, a slow area: what the user sees, what is lost, what recovers by itself.
+  Kafka away, services side, during that same load: arrivals and analytics froze, the outbox drained 412 s after the broker came back, nothing lost. The caller did not see it. Postgres, a stopped area, and the modulith are still open.
 - [ ] **S07-04 Count the cost of a change** · docs
   Three real changes (a new field, a new rule in one area, a new flow between areas): files, repositories, pull requests, deployments, on each side.
 - [ ] **S07-05 Write the comparison guide** · docs

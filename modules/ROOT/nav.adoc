@@ -9,6 +9,7 @@
 ** xref:try-flows.adoc[Try it: routing talks to transportation]
 ** xref:try-documents.adoc[Try it: documents, written once]
 ** xref:try-analytics.adoc[Try it: analytics, from either side]
+** xref:try-load.adoc[Try it: a load, with Kafka away]
 ** xref:switching.adoc[Switching sides: what happens]
 
 .Reference
