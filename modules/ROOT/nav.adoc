@@ -7,6 +7,7 @@
 ** xref:try-failures.adoc[Try it: failure drills]
 ** xref:try-route.adoc[Try it: a route]
 ** xref:try-flows.adoc[Try it: routing talks to transportation]
+** xref:try-documents.adoc[Try it: documents, written once]
 ** xref:switching.adoc[Switching sides: what happens]
 
 .Reference
