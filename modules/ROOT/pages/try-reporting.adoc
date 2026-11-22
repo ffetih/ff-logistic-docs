@@ -72,9 +72,9 @@ Open `http://localhost:8090` as `nexus.planner` (`ff-eu-freight`) and go to **Ra
 . In **Teslimat kanalları**, enable **E-posta** (`planner@ff-eu-freight.test`) and click *Kanalları kaydet* (`PUT /reporting/api/v1/reports/channels`).
 . Under **Aylık PDF**, select `Kasım 2026` (`2026-11`) and click *PDF üret* (`POST /reporting/api/v1/reports/monthly`).
 
-✅ The console confirms `2026-11 raporu hazır`, prints the exact `tenant_delivery_monthly` figures (**7,412** deliveries, **88,067.4 km**, **7,772.4 kg** CO₂e saved), links to Mailpit (`http://localhost:8092`), and exposes the trace ID (`İz: 021be3e6`) in the top bar:
+✅ The console confirms `2026-11 raporu hazır`. The row shows `7412` teslimat, `88.067,4 km` and `7.772,4 kg`. The PDF prints the same month as `88067.350` and `7772.400`. The badge in this shot is `İz: 0009b694`, the list read after generate (`GET /reporting/api/v1/reports`).
 
-image::reporting/console-report.png[Console Rapor page showing generated 2026-11 monthly report figures (7412 shipments, 88067.4 km, 7772.4 kg CO2e saved), Mailpit link, delivery channel preferences, and trace badge 021be3e6]
+image::reporting/console-report.png[Console Rapor page for 2026-11: 7412 teslimat, 88.067,4 km, 7.772,4 kg, Mailpit link, email channel on, trace badge 0009b694]
 
 [[pdf]]
 == 2. Download the rendered PDF from RustFS
@@ -104,9 +104,9 @@ image::reporting/kafka-reporting.png[Kafka broker view showing ff.logistics.repo
 [[jaeger]]
 == 5. Confirm reporting traces in Jaeger
 
-Open Jaeger at `http://localhost:16686`. `reporting` exports OTLP/HTTP spans to `jaeger:4318` just like every other Java service (`ff-base-app`), joining HTTP generation, outbox upkeep, and Kafka consumer spans in one UI:
+Open Jaeger at `http://localhost:16686` and choose service `reporting`. `reporting` exports OTLP/HTTP to `jaeger:4318`, the same way as the other Java processes. This shot is the service list: readiness checks and `outboxUpkeep`. The generate call is its own trace, `51ab3b1bfde66f5c1096807b45d77536` (`POST /api/v1/reports/monthly`). The Kafka send and the delivery consumer share a later trace, `27c51248f48c904f2b5712cb744f9a81`. The outbox publishes after the HTTP request returns, so those spans are not children of the console's trace.
 
-image::reporting/jaeger-reporting.png[Jaeger UI showing reporting in the live Service dropdown alongside logistics-app, identity-service and analytics-loader with active traces]
+image::reporting/jaeger-reporting.png[Jaeger service list with reporting selected, showing readiness checks and outboxUpkeep]
 
 [[api-checks]]
 == 6. Run the same flow via Postman or IntelliJ HTTP Client
