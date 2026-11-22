@@ -39,7 +39,7 @@ Rapor, then *Gömülü BI panosu*. The page posts `/identity/api/v1/guest-tokens
 
 ✅ The frame title was `Deliveries per month (ff-eu-freight)`. The bar is November 2026, the 7409 from xref:try-superset.adoc#chart[step 3 of the Superset page]. After `a4f28d6` the same dashboard also has the distance and CO2e bars (xref:try-superset.adoc#distance[step 4]).
 
-image::console/report.png[Console report page embedding the Superset monthly deliveries chart for ff-eu-freight]
+image::console/report.png[Console report page embedding the Superset dashboard with monthly deliveries, distance and CO2e saved charts for ff-eu-freight]
 
 Depo, Sevkiyat and Rota call the edge on this same origin, with the bodies in the walkthrough collection (xref:walkthrough.adoc#collection[the collection]).
 

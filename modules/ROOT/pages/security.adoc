@@ -25,7 +25,7 @@ flowchart LR
 | Layer | Mechanism | What it prevents
 
 | *1. Identity facade & local JWKS*
-| Only `identity` talks to Keycloak. Domain applications verify JWT signatures locally against `identity`'s cached `/jwks` endpoint. Unknown JSON fields on security APIs fail with `400` (`fail-on-unknown-properties: true`).
+| Only `identity` talks to Keycloak. Domain applications verify JWT signatures locally against the identity service's cached `/jwks` endpoint. Unknown JSON fields on security APIs fail with `400` (`fail-on-unknown-properties: true`).
 | Direct IdP coupling, forged tokens, and silent mass-assignment of fields such as `tenantId` during user or integration-client creation.
 
 | *2. Strict tenant identifier (`TenantIds`)*
@@ -54,7 +54,7 @@ flowchart LR
 * *Cross-tenant user & client creation refused*: `IdentityApiTest` proves a `TENANT_ADMIN` of `ff-eu-freight` cannot create a user or integration client in `ff-tr-distribution` (`400`) and cannot obtain a token for platform-internal clients (`401`).
 * *Cross-tenant guest token refused*: `POST /api/v1/guest-tokens` with another tenant in the body returns `403 Forbidden` (xref:try-superset.adoc#token[recorded run]).
 * *Write-once documents refused three ways*: requesting a second upload link returns `409`, re-using the old signed link returns `412`, and dropping `If-None-Match: *` breaks the signature with `403` (xref:try-documents.adoc#refusals[recorded run]).
-* *Database RLS verified directly and through Superset*: `analytics_reader` sees `0` rows without `SET app.tenant_id`, sees only its tenant's rows with it, is refused `set_config()` with `permission denied` (xref:try-analytics.adoc#reader[analytics run]), and an `ff-tr-distribution` guest token returns `[]` against `ff-eu-freight`'s monthly chart (xref:try-superset.adoc#chart[Superset run]).
+* *Database RLS verified directly and through Superset*: `analytics_reader` sees `0` rows without `SET app.tenant_id`, sees only its tenant's rows with it, is refused `set_config()` with `permission denied` (xref:try-analytics.adoc#reader[analytics run]), and an `ff-tr-distribution` guest token returns `[]` against the monthly chart for `ff-eu-freight` (xref:try-superset.adoc#chart[Superset run]).
 
 == Local-cluster credentials boundary
 

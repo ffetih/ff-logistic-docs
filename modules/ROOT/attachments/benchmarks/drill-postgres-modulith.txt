@@ -1,0 +1,8 @@
+== drill: postgres away for 30s, modulith side, from 2026-11-22T05:03:46Z
+  time  postgres  delivered  arrivals analytics  outbox
+   +1s  up                0         0         5       3
+  +66s  away      (the database does not answer)
+-- postgres back at +66s
+  +67s  back      (the database does not answer)
+  +73s  back              7        11         5       0
+-- caught up 7s after postgres came back

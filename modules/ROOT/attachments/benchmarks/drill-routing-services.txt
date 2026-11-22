@@ -1,0 +1,16 @@
+== drill: routing away for 60s, services side, from 2026-11-22T05:32:30Z
+  time  routing   delivered  arrivals analytics  outbox
+   +1s  up                5        10        10       0
+   +8s  away             35        40        40       0
+  +14s  away             60        60        65       0
+  +20s  away             70        70        70       0
+  +25s  away             80        80        80       0
+  +31s  away             85        85        85       0
+  +38s  away             95        95        95       0
+  +44s  away            100       100       100       0
+  +50s  away            110       110       110       0
+  +56s  away            115       115       115       0
+  +62s  away            125       125       125       0
+-- routing back at +62s
+  +63s  back            125       125       125       0
+-- caught up 1s after routing came back

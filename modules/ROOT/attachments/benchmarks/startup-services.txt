@@ -1,0 +1,40 @@
+side: services
+start: 2026-11-22T06:18:24Z
+---- deleting ----
+pod/gateway-bf5c588b-wkb6l
+pod/routing-85b974b5c5-7h5tw
+pod/routing-85b974b5c5-thqkk
+pod/transportation-5784dfd798-775kc
+pod/transportation-5784dfd798-sh2f4
+pod/warehousing-58b9865f79-lx5sl
+pod/warehousing-58b9865f79-z2bgl
+pod "gateway-bf5c588b-wkb6l" deleted from ff-logistics namespace
+pod "routing-85b974b5c5-7h5tw" deleted from ff-logistics namespace
+pod "routing-85b974b5c5-thqkk" deleted from ff-logistics namespace
+pod "transportation-5784dfd798-775kc" deleted from ff-logistics namespace
+pod "transportation-5784dfd798-sh2f4" deleted from ff-logistics namespace
+pod "warehousing-58b9865f79-lx5sl" deleted from ff-logistics namespace
+pod "warehousing-58b9865f79-z2bgl" deleted from ff-logistics namespace
+deleted: 2026-11-22T06:18:25Z
+pod/gateway-bf5c588b-wkb6l condition met
+pod/routing-85b974b5c5-7h5tw condition met
+pod/routing-85b974b5c5-thqkk condition met
+gone: 2026-11-22T06:18:37Z
+pod/gateway-bf5c588b-n54h4 condition met
+pod/routing-85b974b5c5-7s586 condition met
+pod/routing-85b974b5c5-g9q4j condition met
+pod/transportation-5784dfd798-62kf4 condition met
+pod/transportation-5784dfd798-qn6lz condition met
+pod/warehousing-58b9865f79-rv7d9 condition met
+pod/warehousing-58b9865f79-sqcbb condition met
+ready: 2026-11-22T06:18:41Z
+---- pods ----
+gateway-bf5c588b-n54h4  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:36Z  took=11s
+routing-85b974b5c5-7s586  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+routing-85b974b5c5-g9q4j  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+transportation-5784dfd798-62kf4  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+transportation-5784dfd798-qn6lz  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+warehousing-58b9865f79-rv7d9  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+warehousing-58b9865f79-sqcbb  start=2026-11-22T06:18:25Z  ready=2026-11-22T06:18:40Z  took=15s
+edge /actuator/info: 404
+edge at: 2026-11-22T06:18:41Z

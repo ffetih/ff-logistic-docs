@@ -1,0 +1,26 @@
+side: modulith
+start: 2026-11-22T06:29:25Z
+---- deleting ----
+pod/logistics-app-8474d4d4c4-m74c2
+pod/logistics-app-8474d4d4c4-nrs2j
+pod/logistics-app-8474d4d4c4-tkd8m
+pod/logistics-app-8474d4d4c4-v7lt7
+pod "logistics-app-8474d4d4c4-m74c2" deleted from ff-logistics namespace
+pod "logistics-app-8474d4d4c4-nrs2j" deleted from ff-logistics namespace
+pod "logistics-app-8474d4d4c4-tkd8m" deleted from ff-logistics namespace
+pod "logistics-app-8474d4d4c4-v7lt7" deleted from ff-logistics namespace
+deleted: 2026-11-22T06:29:25Z
+pod/logistics-app-8474d4d4c4-m74c2 condition met
+gone: 2026-11-22T06:29:37Z
+pod/logistics-app-8474d4d4c4-pdtq9 condition met
+pod/logistics-app-8474d4d4c4-r8fv7 condition met
+pod/logistics-app-8474d4d4c4-wzdnb condition met
+pod/logistics-app-8474d4d4c4-xgc52 condition met
+ready: 2026-11-22T06:29:41Z
+---- pods ----
+logistics-app-8474d4d4c4-pdtq9  start=2026-11-22T06:29:25Z  ready=2026-11-22T06:29:41Z  took=16s
+logistics-app-8474d4d4c4-r8fv7  start=2026-11-22T06:29:25Z  ready=2026-11-22T06:29:41Z  took=16s
+logistics-app-8474d4d4c4-wzdnb  start=2026-11-22T06:29:25Z  ready=2026-11-22T06:29:41Z  took=16s
+logistics-app-8474d4d4c4-xgc52  start=2026-11-22T06:29:25Z  ready=2026-11-22T06:29:41Z  took=16s
+edge /actuator/info: 000curl-failed
+edge at: 2026-11-22T06:29:42Z

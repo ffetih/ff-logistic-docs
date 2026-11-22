@@ -1,0 +1,8 @@
+== drill: postgres away for 30s, services side, from 2026-11-22T05:19:44Z
+  time  postgres  delivered  arrivals analytics  outbox
+   +2s  up                5         9        10       0
+  +67s  away      (the database does not answer)
+-- postgres back at +68s
+  +68s  back      (the database does not answer)
+  +74s  back             14        14        19       0
+-- caught up 6s after postgres came back

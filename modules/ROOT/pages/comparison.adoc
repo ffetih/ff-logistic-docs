@@ -56,9 +56,51 @@ xychart-beta
   bar [12.7, 20.1, 30.1, 44.5]
 ....
 
+=== All seven operations side by side (clean load)
+
+The full k6 breakdown across 1,130 modulith iterations (7,915 requests) and 1,125 services iterations (7,880 requests), all with `0.0%` failed:
+
+[cols="2,2,2,2,2",options="header"]
+|===
+| Operation | Modulith median / p95 | Services median / p95 | Modulith p99 | Services p99
+
+| `plan` (Flow 1) | 12.7 / 30.1 ms | 20.1 / 44.5 ms | 46.0 ms | 86.2 ms
+| `pickup` | 11.1 / 21.9 ms | 11.9 / 20.2 ms | 32.1 ms | 27.0 ms
+| `departure` | 11.4 / 21.7 ms | 10.2 / 17.2 ms | 24.3 ms | 21.8 ms
+| `deliver` (Flow 2) | 12.2 / 21.6 ms | 9.7 / 16.6 ms | 25.0 ms | 20.1 ms
+| `shipment` (GET) | 3.9 / 10.4 ms | 3.8 / 13.4 ms | 18.5 ms | 17.4 ms
+| `warehouses` (GET) | 3.6 / 6.4 ms | 4.0 / 7.6 ms | 9.1 ms | 10.1 ms
+| `distance` (GET) | 1.8 / 3.5 ms | 2.3 / 4.1 ms | 4.9 ms | 6.2 ms
+|===
+
+[mermaid]
+....
+xychart-beta
+  title "Median latency per endpoint (ms) — line 1: Modulith, line 2: Services"
+  x-axis ["plan", "pickup", "departure", "deliver", "shipment", "warehouses", "distance"]
+  y-axis "Milliseconds" 0 --> 22
+  line [12.7, 11.1, 11.4, 12.2, 3.9, 3.6, 1.8]
+  line [20.1, 11.9, 10.2, 9.7, 3.8, 4.0, 2.3]
+....
+
+Three architectural costs are directly visible in these numbers:
+
+* *Cross-area sync call (`plan`)*: an HTTP hop from `transportation` to `routing` adds ~7.4 ms at the median (`12.7 → 20.1 ms`) and nearly doubles p99 (`46.0 → 86.2 ms`).
+* *Gateway hop (`distance`, `warehouses`)*: nginx adds ~0.4–0.5 ms to pure read endpoints (`1.8 → 2.3 ms`, `3.6 → 4.0 ms`).
+* *In-process listener vs outbox (`deliver`)*: `deliver` is slightly faster on services (`9.7 vs 12.2 ms`), because `transportation` only commits its row and outbox record and returns, whereas the modulith runs the in-process Flow 2 listener inside the same JVM.
+
 The database runs keep that `plan` gap for the plans that got a connection (12.2 against 23.9 at the median). Five plans on each side waited and gave up at 30.0 s. Those five iterations stopped there. Every request after a successful plan succeeded. The rate fell to 3.65 and 3.53, which is five users held for about half a minute.
 
 With routing stopped, no plan failed. The median stayed 21.6 ms. The p95 is 1.01 s: transportation waited its 1 s connect timeout and the core booked the straight-line estimate. The scenario's own distance call has no estimate. 7.8 % of them waited the gateway's 2 s and failed, and that is the whole of the 1.11 %. A failed distance does not stop the iteration, so the deliveries were still sent. k6's bar for the scenario is under 1 % failed. This run crossed it.
+
+[mermaid]
+....
+xychart-beta
+  title "Services p95 latency (ms) — clean load vs 60 s routing outage"
+  x-axis ["plan clean", "plan routing away", "distance clean", "distance routing away"]
+  y-axis "Milliseconds" 0 --> 2200
+  bar [44.5, 1014.1, 4.1, 2001.3]
+....
 
 [[pods]]
 == What the pods cost
@@ -97,6 +139,17 @@ The modulith did not give that memory back. At the start of its database run the
 
 The platform is shared. On the clean runs Kafka used 584 millicores while the services ran, and 832 while the modulith ran. The modulith window includes the broker draining a full outbox, so 832 is that peak. When the database or routing was the thing stopped, Kafka stayed at 60 and 52 millicores: there was no backlog. Identity stayed at 5 or 6 millicores on the two clean runs. The applications check tokens locally, and five sign-ins are its work.
 
+[mermaid]
+....
+xychart-beta
+  title "Peak CPU under clean load by component (millicores)"
+  x-axis ["logistics-app (4)", "transportation (2)", "warehousing (2)", "routing (2)", "gateway (1)", "kafka (mod)", "kafka (svc)", "postgres", "identity"]
+  y-axis "Millicores" 0 --> 1150
+  bar [1044, 379, 113, 85, 21, 832, 584, 86, 6]
+....
+
+On the services side, `transportation` accounts for *63%* of application CPU (`379` of `598` millicores) and `932 MiB` across its two pods, while `gateway` uses only `21` millicores and `19 MiB`. Local JWKS verification keeps `identity` nearly idle (`5–6` millicores) under continuous authenticated load.
+
 [[away]]
 == What a stopped dependency did
 
@@ -128,6 +181,18 @@ Caught up means arrivals and analytics within three of the deliveries, and no mo
 |===
 
 Flow 2 is where a minute without Kafka is felt. On the services the arrival is a consumer, so the dock learned late and the outbox held about three rows per delivery until the broker accepted them. On the modulith the arrival is a call in the same process, after the commit, so the dock did not wait. Analytics crosses Kafka on both sides, and it waited on both. The 412 seconds and the 231 seconds are a backlog of about a thousand events, emptied on the upkeep's pause, not the minute itself.
+
+[mermaid]
+....
+xychart-beta
+  title "60 s Kafka outage — outbox backlog & drain curve (line 1: Modulith, line 2: Services)"
+  x-axis ["0s", "30s", "60s", "80s", "120s", "150s", "180s", "210s", "240s", "270s", "300s", "360s", "420s", "480s"]
+  y-axis "Unfinished outbox rows" 0 --> 1200
+  line [0, 431, 834, 700, 650, 550, 450, 350, 200, 50, 0, 0, 0, 0]
+  line [0, 375, 855, 1095, 660, 610, 566, 510, 460, 410, 360, 160, 60, 0]
+....
+
+During the outage (`+8s` to `+62s`), the modulith's warehouse arrivals stayed locked 1:1 with deliveries (`285 / 285`) while only analytics paused at `7`. On the services side, both arrivals and analytics froze at `15` for 80 seconds while deliveries climbed to `370`, then caught up completely once Kafka returned (`1,225 / 1,225`, zero lost).
 
 Stopping PostgreSQL looks the same from both sides. The event is written in the delivery's transaction, so a delivery that cannot commit leaves no outbox row for Kafka to hold. Flow 2 crossing Kafka on the services added no queue. The drill was asked for 30 s. On both sides one `kubectl exec` blocked while the pod was gone, and the recorded gap was about a minute.
 
@@ -257,3 +322,29 @@ What these measurements say for a real team making this call:
 |===
 
 Because both implementations share the same hexagonal domain cores, starting as a modular monolith here does not lock out microservices: the ports and event contracts are already in place when the team or workload actually justifies the hatches.
+
+[[raw-transcripts]]
+== Raw benchmark and drill transcripts
+
+Every figure and chart on this page comes from the archived k6, `kubectl top` and drill outputs below:
+
+[cols="2,2,2",options="header"]
+|===
+| Scenario | Modulith transcript | Services transcript
+
+| Clean load + 60 s Kafka outage
+| xref:attachment$benchmarks/load-modulith-kafka-away.txt[load-modulith-kafka-away.txt] · xref:attachment$benchmarks/drill-kafka-modulith.txt[drill-kafka-modulith.txt]
+| xref:attachment$benchmarks/load-services-kafka-away.txt[load-services-kafka-away.txt] · xref:attachment$benchmarks/drill-kafka-services.txt[drill-kafka-services.txt]
+
+| Load + PostgreSQL outage
+| xref:attachment$benchmarks/load-modulith-database-away.txt[load-modulith-database-away.txt] · xref:attachment$benchmarks/drill-postgres-modulith.txt[drill-postgres-modulith.txt]
+| xref:attachment$benchmarks/load-services-database-away.txt[load-services-database-away.txt] · xref:attachment$benchmarks/drill-postgres-services.txt[drill-postgres-services.txt]
+
+| Load + Routing outage (services only)
+| — (single process)
+| xref:attachment$benchmarks/load-services-routing-away.txt[load-services-routing-away.txt] · xref:attachment$benchmarks/drill-routing-services.txt[drill-routing-services.txt]
+
+| Startup to Ready (pod restart)
+| xref:attachment$benchmarks/startup-modulith.txt[startup-modulith.txt]
+| xref:attachment$benchmarks/startup-services.txt[startup-services.txt]
+|===
