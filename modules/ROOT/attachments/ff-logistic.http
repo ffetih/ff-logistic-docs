@@ -1,0 +1,687 @@
+# FF Logistic — Uçtan Uca (E2E) API Akışı (S1 -> S8)
+# ==============================================================================
+# Kullanım:
+#   IntelliJ IDEA'da sağ üstten ortam olarak "local" seçin (http-client.env.json).
+#   İstekleri yukarıdan aşağıya tek tek çalıştırın; her adım gerekli ID/token
+#   değişkenlerini otomatik olarak client.global içine kaydeder.
+#
+# Notlar:
+#   - Access token 5 dakika geçerlidir. 401 alırsanız 1.1 / 1.2 adımını tekrar çalıştırın.
+#   - Aynı dosya hem Modulith hem Services tarafında birebir aynı URL'lerle çalışır.
+#   - Veri tabanı (localhost:5432), Kafka (localhost:9094) ve Superset (localhost:8088)
+#     üzerindeki etkiler ilgili adımların üstünde belirtilmiştir.
+
+################################################################################
+### 0. SAĞLIK KONTROLÜ VE AKTİF TARAF (MODULITH vs SERVICES)
+################################################################################
+
+### 0.1 Edge readiness (aktif taraf hangisiyse o cevap verir)
+GET {{edge}}/actuator/health/readiness
+
+> {%
+    client.test("Edge ready", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 0.2 Hangi taraf çalışıyor? (Modulith -> 200 build/git bilgisi, Services Gateway -> 404)
+GET {{edge}}/actuator/info
+
+### 0.3 Analytics Loader ve Superset sağlık kontrolü
+GET {{analytics}}/actuator/health
+
+### 0.4 Superset health
+GET {{superset}}/health
+
+> {%
+    client.test("Superset healthy", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+################################################################################
+### 1. IDENTITY (localhost:8085) — İKİ TENANT İÇİN OTURUM AÇMA
+################################################################################
+
+### 1.1 EU Tenant Login (ff-eu-freight — nexus.planner)
+# Keycloak'tan JWT alır (5 dk geçerli). Roller: TENANT_ADMIN, LOGISTICS_PLANNER, WAREHOUSE_OPERATOR, REPORT_VIEWER
+POST {{identity}}/sessions
+Content-Type: application/json
+
+{
+  "username": "{{euUser}}",
+  "password": "{{password}}"
+}
+
+> {%
+    client.test("EU login 200", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("euToken", response.body.accessToken);
+%}
+
+### 1.2 TR Tenant Login (ff-tr-distribution — geodispatch.operator)
+# İkinci tenant izolasyon testleri (özellikle Superset RLS) için kullanılır.
+POST {{identity}}/sessions
+Content-Type: application/json
+
+{
+  "username": "{{trUser}}",
+  "password": "{{password}}"
+}
+
+> {%
+    client.test("TR login 200", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("trToken", response.body.accessToken);
+%}
+
+### 1.3 Kimlik doğrulama kontrolü (/api/v1/me)
+GET {{edge}}/api/v1/me
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Caller is ff-eu-freight", () => {
+        client.assert(response.status === 200, "Expected 200");
+        client.assert(response.body.tenantId === "ff-eu-freight", "Unexpected tenant");
+    });
+%}
+
+################################################################################
+### 2. WAREHOUSING (WMS) — DEPO, BİN, ASN VE PALET KABULÜ (S3)
+# DB kontrolü (ff_logistics): wms_warehouses, wms_bins, wms_asns, wms_pallets
+################################################################################
+
+### 2.1 Depo oluştur (IST-HDK, GLN: 8690001000011)
+# İlk çalıştırmada 201, depo zaten varsa 409 döner (sonraki adım ID'yi her durumda listeler).
+POST {{edge}}/api/v1/wms/warehouses
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "code": "IST-HDK",
+  "name": "Istanbul Hadimkoy Hub",
+  "gln": "8690001000011",
+  "gs1CompanyPrefix": "8690001",
+  "countryCode": "TR",
+  "city": "Istanbul",
+  "latitude": 41.1025,
+  "longitude": 28.6512,
+  "palletCapacity": 12000
+}
+
+> {%
+    if (response.status === 201 && response.body.id) {
+        client.global.set("warehouseId", response.body.id);
+    }
+%}
+
+### 2.2 Depoları listele ve IST-HDK ID'sini yakala (re-run güvenli)
+GET {{edge}}/api/v1/wms/warehouses
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Warehouses listed", () => client.assert(response.status === 200, "Expected 200"));
+    const wh = response.body.find(w => w.code === "IST-HDK") || response.body[0];
+    if (wh) {
+        client.global.set("warehouseId", wh.id);
+    }
+%}
+
+### 2.3 Raf / Bin oluştur (A-01-01 — zaten varsa 409 döner)
+POST {{edge}}/api/v1/wms/warehouses/{{warehouseId}}/bins
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "code": "A-01-01",
+  "kind": "RACK",
+  "palletCapacity": 4
+}
+
+### 2.4 ASN (Sevk İhbarı) oluştur (her çalıştırmada benzersiz ASN numarası)
+POST {{edge}}/api/v1/wms/asns
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "asnNumber": "ASN-2026-{{$timestamp}}",
+  "warehouseId": "{{warehouseId}}",
+  "supplierName": "Anatolia Textiles",
+  "expectedArrival": "2026-11-25",
+  "lines": [
+    {
+      "gtin": "8690001100018",
+      "skuCode": "TSHIRT-M-BLUE",
+      "quantity": 120
+    }
+  ]
+}
+
+> {%
+    client.test("ASN created", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("asnId", response.body.id);
+%}
+
+### 2.5 İlk paleti kabul et (GS1 SSCC otomatik sequence'tan üretilir)
+POST {{edge}}/api/v1/wms/asns/{{asnId}}/pallets
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "gtin": "8690001100018",
+  "quantity": 60,
+  "grossWeightKg": 180.5,
+  "binCode": "A-01-01"
+}
+
+> {%
+    client.test("Pallet received", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("palletSscc", response.body.sscc);
+%}
+
+### 2.6 İkinci paleti kabul et (ASN -> RECEIVED durumuna geçer)
+POST {{edge}}/api/v1/wms/asns/{{asnId}}/pallets
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "gtin": "8690001100018",
+  "quantity": 60,
+  "grossWeightKg": 180.5,
+  "binCode": "A-01-01"
+}
+
+### 2.7 ASN son durumunu kontrol et
+GET {{edge}}/api/v1/wms/asns/{{asnId}}
+Authorization: Bearer {{euToken}}
+
+################################################################################
+### 3. TRANSPORTATION (TMS) + FLOW 2 (TESLİMAT -> DEPO ARRIVAL -> KAFKA -> ANALYTICS)
+# DB (ff_logistics): tms_shipments, wms_inbound_arrivals, <schema>.event_publication
+# Kafka topic: ff.logistics.tms.shipment-delivered
+# DB (ff_logistics_analytics): shipment_deliveries, tenant_delivery_monthly
+################################################################################
+
+### 3.1 Multimodal Shipment planla (Köln -> Trieste -> İstanbul, CO2e tasarruflu)
+# destinationGln = 8690001000011 -> IST-HDK deposu
+POST {{edge}}/api/v1/tms/shipments
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "consignorName": "Rhein Parts GmbH",
+  "consigneeName": "Istanbul Hadimkoy Hub",
+  "destinationGln": "8690001000011",
+  "equipmentCode": "CSQU3054383",
+  "sscc": "106141411234567897",
+  "incoterm": "DAP",
+  "origin": "Cologne Eifeltor",
+  "destination": "Istanbul Hadimkoy",
+  "grossWeightKg": 18000,
+  "legs": [
+    {
+      "mode": "ROAD",
+      "origin": "Cologne Eifeltor",
+      "destination": "Cologne Eifeltor Terminal",
+      "distanceKm": 15,
+      "carrierReference": "DE-K-FF-210"
+    },
+    {
+      "mode": "RAIL",
+      "origin": "Cologne Eifeltor Terminal",
+      "destination": "Trieste",
+      "distanceKm": 1050,
+      "carrierReference": "TXL-41877"
+    },
+    {
+      "mode": "SEA_RORO",
+      "origin": "Trieste",
+      "destination": "Istanbul Pendik",
+      "distanceKm": 1450,
+      "carrierReference": "DFDS-PT-2611"
+    },
+    {
+      "mode": "ROAD",
+      "origin": "Istanbul Pendik",
+      "destination": "Istanbul Hadimkoy",
+      "distanceKm": 60,
+      "carrierReference": "TR-34-FF-0417"
+    }
+  ]
+}
+
+> {%
+    client.test("Multimodal shipment planned", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("shipmentId", response.body.id);
+    client.global.set("shipmentNumber", response.body.shipmentNumber);
+%}
+
+### 3.2 Pickup
+POST {{edge}}/api/v1/tms/shipments/{{shipmentId}}/pickup
+Authorization: Bearer {{euToken}}
+
+### 3.3 Departure
+POST {{edge}}/api/v1/tms/shipments/{{shipmentId}}/departure
+Authorization: Bearer {{euToken}}
+
+### 3.4 Delivery (Flow 2 + Kafka + Analytics tetiklenir!)
+# Outbox -> Kafka (ff.logistics.tms.shipment-delivered) -> WMS Arrival + Analytics Loader
+POST {{edge}}/api/v1/tms/shipments/{{shipmentId}}/delivery
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "receivedBy": "Dock 2, A. Yilmaz"
+}
+
+> {%
+    client.test("Shipment delivered", () => {
+        client.assert(response.status === 200, "Expected 200");
+        client.assert(response.body.status === "DELIVERED", "Expected DELIVERED");
+    });
+%}
+
+### 3.5 Depoda otomatik açılan Inbound Arrivals listesini gör
+GET {{edge}}/api/v1/wms/arrivals
+Authorization: Bearer {{euToken}}
+
+################################################################################
+### 4. ROUTING (GEO) + FLOW 1 (MESAFE SORGUSU) + FLOW 3 (TEK TIKLA 3 ALAN!)
+# Kafka topic'leri:
+#   1) ff.logistics.geo.route-stop-completed
+#   2) ff.logistics.tms.shipment-delivered
+################################################################################
+
+### 4.1 Territory oluştur (IST-EU — zaten varsa 409 döner)
+POST {{edge}}/api/v1/geo/territories
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "territoryCode": "IST-EU",
+  "name": "Istanbul Europe",
+  "hubGln": "8690001000011",
+  "centerLatitude": 41.05,
+  "centerLongitude": 28.85,
+  "coverageRadiusKm": 35,
+  "activePointCount": 420,
+  "weeklyVisitTarget": 840
+}
+
+### 4.2 Doğrudan mesafe servisi testi (Routing /api/v1/geo/distance)
+GET {{edge}}/api/v1/geo/distance?fromLatitude=41.10&fromLongitude=28.65&toLatitude=41.03&toLongitude=28.67
+Authorization: Bearer {{euToken}}
+
+### 4.3 Timefold zaman pencereli rota optimizasyonu (dueMinutes sırayı değiştirir)
+POST {{edge}}/api/v1/geo/routes
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "territoryCode": "IST-EU",
+  "vehiclePlate": "34 FF 0418",
+  "depotLatitude": 41.10,
+  "depotLongitude": 28.65,
+  "vehicleCapacityKg": 3500,
+  "averageSpeedKmh": 40,
+  "stops": [
+    {
+      "stopCode": "IST-ESN",
+      "customerName": "Esenyurt Depot Shop",
+      "latitude": 41.03,
+      "longitude": 28.67,
+      "demandWeightKg": 200,
+      "serviceMinutes": 15
+    },
+    {
+      "stopCode": "IST-KDK",
+      "customerName": "Kadikoy Market",
+      "latitude": 40.99,
+      "longitude": 29.03,
+      "demandWeightKg": 400,
+      "serviceMinutes": 15,
+      "readyMinutes": 0,
+      "dueMinutes": 70
+    }
+  ]
+}
+
+### 4.4 FLOW 1: Koordinatlı Shipment planla (Transportation -> Routing mesafe ister)
+# Response'ta legs[0].distanceSource = "ROUTING" (Routing kapalıysa "ESTIMATE" fallback) görünür.
+POST {{edge}}/api/v1/tms/shipments
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "consignorName": "FF Hadimkoy",
+  "consigneeName": "Istanbul Hadimkoy Hub",
+  "destinationGln": "8690001000011",
+  "equipmentCode": "CSQU3054383",
+  "sscc": "106141411234567897",
+  "incoterm": "DAP",
+  "origin": "Hadimkoy Hub",
+  "destination": "Esenyurt",
+  "grossWeightKg": 800,
+  "legs": [
+    {
+      "mode": "ROAD",
+      "origin": "Hadimkoy Hub",
+      "destination": "Esenyurt",
+      "originLatitude": 41.10,
+      "originLongitude": 28.65,
+      "destinationLatitude": 41.03,
+      "destinationLongitude": 28.67,
+      "carrierReference": "TR-34-FF-0417"
+    }
+  ]
+}
+
+> {%
+    client.test("Flow 1 road shipment planned", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("flowShipmentId", response.body.id);
+    client.global.set("flowShipmentNumber", response.body.shipmentNumber);
+%}
+
+### 4.5 Bu shipment'ı taşıyan rota oluştur (Flow 3 hazırlığı)
+POST {{edge}}/api/v1/geo/routes
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "territoryCode": "IST-EU",
+  "vehiclePlate": "34 FF 0417",
+  "depotLatitude": 41.10,
+  "depotLongitude": 28.65,
+  "vehicleCapacityKg": 3500,
+  "averageSpeedKmh": 40,
+  "stops": [
+    {
+      "stopCode": "IST-HDK",
+      "customerName": "FF Hadimkoy Warehouse",
+      "latitude": 41.10,
+      "longitude": 28.66,
+      "demandWeightKg": 800,
+      "serviceMinutes": 15,
+      "shipmentNumber": "{{flowShipmentNumber}}"
+    }
+  ]
+}
+
+> {%
+    client.test("Route created", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("routeId", response.body.id);
+%}
+
+### 4.6 FLOW 3 -> FLOW 2 -> ANALYTICS: Durağı tamamla (1 tıkla 3 alan + analytics!)
+# Routing stop COMPLETED -> Transportation shipment DELIVERED -> WMS arrival OPEN -> Analytics Loader
+POST {{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/completion
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "receivedBy": "Dock 2, Route Driver"
+}
+
+> {%
+    client.test("Stop completed", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 4.7 Shipment'ın otomatik DELIVERED olduğunu doğrula (1-2 sn sonra çalıştır)
+GET {{edge}}/api/v1/tms/shipments/{{flowShipmentId}}
+Authorization: Bearer {{euToken}}
+
+### 4.8 WMS'de bu shipment için Arrival açıldığını doğrula
+GET {{edge}}/api/v1/wms/arrivals
+Authorization: Bearer {{euToken}}
+
+################################################################################
+### 5. DOCUMENTS — RUSTFS PRESIGNED WRITE-ONCE e-CMR VE e-POD (S5-05)
+# Uygulama dosya baytlarına hiç dokunmaz; istemci doğrudan localhost:9000'a PUT eder.
+################################################################################
+
+### 5.1 e-CMR yükleme linki al (Transportation imzalar)
+POST {{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/upload-link
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("e-CMR upload link issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("ecmrUploadUrl", response.body.url);
+%}
+
+### 5.2 e-CMR PDF'ini doğrudan RustFS'e (localhost:9000) yükle (If-None-Match: * zorunlu)
+PUT {{ecmrUploadUrl}}
+Content-Type: application/pdf
+If-None-Match: *
+
+%PDF-1.4
+% FF Logistic e-CMR for {{flowShipmentNumber}}
+%%EOF
+
+> {%
+    client.test("e-CMR uploaded to RustFS", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 5.3 Write-once testi: aynı e-CMR için tekrar upload-link iste -> 409 Conflict beklenir
+POST {{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/upload-link
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Second e-CMR upload-link refused with 409", () => client.assert(response.status === 409, "Expected 409"));
+%}
+
+### 5.4 e-CMR indirme linki al
+GET {{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/download-link
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("e-CMR download link issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("ecmrDownloadUrl", response.body.url);
+%}
+
+### 5.5 e-CMR dosyasını RustFS'ten indir
+GET {{ecmrDownloadUrl}}
+
+### 5.6 e-POD yükleme linki al (Routing imzalar)
+POST {{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/epod/upload-link
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("e-POD upload link issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("epodUploadUrl", response.body.url);
+%}
+
+### 5.7 e-POD dosyasını RustFS'e yükle
+PUT {{epodUploadUrl}}
+Content-Type: image/png
+If-None-Match: *
+
+FF-EPOD-SIGNATURE-PLACEHOLDER-{{flowShipmentNumber}}
+
+> {%
+    client.test("e-POD uploaded to RustFS", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 5.8 e-POD indirme linki al
+GET {{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/epod/download-link
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("e-POD download link issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("epodDownloadUrl", response.body.url);
+%}
+
+### 5.9 e-POD dosyasını RustFS'ten indir
+GET {{epodDownloadUrl}}
+
+################################################################################
+### 6. SUPERSET & MULTI-TENANT RLS İZOLASYONU (S8)
+# Tek Superset (localhost:8088), tek DB (ff_logistics_analytics).
+# Guest token'ı Identity (localhost:8085) imzalar; Superset DB bağlantısında
+# SET app.tenant_id = '<token-tenant>' çalıştırır.
+################################################################################
+
+### 6.1 Negatif Güvenlik Testi: EU kullanıcısı TR tenant'ı için guest token isterse -> 403 Forbidden!
+POST {{identity}}/api/v1/guest-tokens
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "dashboardId": "{{dashboardId}}",
+  "tenantId": "ff-tr-distribution"
+}
+
+> {%
+    client.test("Cross-tenant guest token refused with 403", () => client.assert(response.status === 403, "Expected 403"));
+%}
+
+### 6.2 EU tenant'ı (ff-eu-freight) için Superset Guest Token al
+POST {{identity}}/api/v1/guest-tokens
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "dashboardId": "{{dashboardId}}"
+}
+
+> {%
+    client.test("EU guest token issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("euGuestToken", response.body.token);
+%}
+
+### 6.3 TR tenant'ı (ff-tr-distribution) için Superset Guest Token al
+POST {{identity}}/api/v1/guest-tokens
+Authorization: Bearer {{trToken}}
+Content-Type: application/json
+
+{
+  "dashboardId": "{{dashboardId}}"
+}
+
+> {%
+    client.test("TR guest token issued", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("trGuestToken", response.body.token);
+%}
+
+### 6.4 Superset Chart'ını EU Guest Token ile sorgula -> ff-eu-freight teslimat sayısını döner!
+POST {{superset}}/api/v1/chart/data
+X-GuestToken: {{euGuestToken}}
+Content-Type: application/json
+
+{
+  "datasource": { "id": 1, "type": "table" },
+  "force": true,
+  "queries": [
+    {
+      "columns": [
+        {
+          "columnType": "BASE_AXIS",
+          "sqlExpression": "delivery_month",
+          "label": "delivery_month",
+          "expressionType": "SQL",
+          "timeGrain": "P1M"
+        }
+      ],
+      "metrics": ["delivered_shipments"],
+      "orderby": [["delivered_shipments", false]],
+      "row_limit": 100
+    }
+  ],
+  "result_format": "json",
+  "result_type": "full",
+  "form_data": {
+    "slice_id": 1,
+    "dashboardId": 1,
+    "viz_type": "echarts_timeseries_bar"
+  }
+}
+
+> {%
+    client.test("EU chart returns 200", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 6.5 Aynı Superset Chart'ını TR Guest Token ile sorgula -> EU verisini GÖREMEZ ([] veya sadece TR satırları)!
+POST {{superset}}/api/v1/chart/data
+X-GuestToken: {{trGuestToken}}
+Content-Type: application/json
+
+{
+  "datasource": { "id": 1, "type": "table" },
+  "force": true,
+  "queries": [
+    {
+      "columns": [
+        {
+          "columnType": "BASE_AXIS",
+          "sqlExpression": "delivery_month",
+          "label": "delivery_month",
+          "expressionType": "SQL",
+          "timeGrain": "P1M"
+        }
+      ],
+      "metrics": ["delivered_shipments"],
+      "orderby": [["delivered_shipments", false]],
+      "row_limit": 100
+    }
+  ],
+  "result_format": "json",
+  "result_type": "full",
+  "form_data": {
+    "slice_id": 1,
+    "dashboardId": 1,
+    "viz_type": "echarts_timeseries_bar"
+  }
+}
+
+> {%
+    client.test("TR chart returns 200", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+################################################################################
+### 7. (OPSİYONEL) TR TENANT'I İÇİN DE BİR TESLİMAT YAP VE SUPERSET'TE FARKI GÖR!
+# 7.1 + 7.2'yi çalıştırıp 2-3 sn sonra tekrar 6.5'i çalıştırırsan TR'nin kendi
+# teslimat sayısının arttığını, EU'nun sayısının değişmediğini görürsün.
+################################################################################
+
+### 7.1 TR Tenant (ff-tr-distribution) için Shipment planla
+POST {{edge}}/api/v1/tms/shipments
+Authorization: Bearer {{trToken}}
+Content-Type: application/json
+
+{
+  "consignorName": "Anadolu Dagitim AS",
+  "consigneeName": "Izmir Liman Depo",
+  "equipmentCode": "CSQU3054383",
+  "sscc": "106141411234567897",
+  "incoterm": "DAP",
+  "origin": "Ankara Lojistik Ussu",
+  "destination": "Izmir Kemalpasa",
+  "grossWeightKg": 12000,
+  "legs": [
+    {
+      "mode": "RAIL",
+      "origin": "Ankara Lojistik Ussu",
+      "destination": "Izmir Alsancak",
+      "distanceKm": 580,
+      "carrierReference": "TCDD-TR-2026"
+    },
+    {
+      "mode": "ROAD",
+      "origin": "Izmir Alsancak",
+      "destination": "Izmir Kemalpasa",
+      "distanceKm": 35,
+      "carrierReference": "TR-35-FF-0101"
+    }
+  ]
+}
+
+> {%
+    client.test("TR shipment planned", () => client.assert(response.status === 201, "Expected 201"));
+    client.global.set("trShipmentId", response.body.id);
+%}
+
+### 7.2 TR Tenant Shipment'ını teslim et (sonra 6.4 ve 6.5'i tekrar çalıştır!)
+POST {{edge}}/api/v1/tms/shipments/{{trShipmentId}}/delivery
+Authorization: Bearer {{trToken}}
+Content-Type: application/json
+
+{
+  "receivedBy": "Izmir Dock 1"
+}
+
+> {%
+    client.test("TR shipment delivered", () => client.assert(response.status === 200, "Expected 200"));
+%}

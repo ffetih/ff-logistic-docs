@@ -14,6 +14,7 @@
 ** xref:try-routing-away.adoc[Try it: a load, with routing away]
 ** xref:comparison.adoc[Comparison]
 ** xref:try-superset.adoc[Try it: one tenant's months]
+** xref:try-console.adoc[Try it: the console]
 ** xref:switching.adoc[Switching sides: what happens]
 
 .Reference

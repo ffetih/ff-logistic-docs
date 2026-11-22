@@ -298,18 +298,22 @@ The reader role sees a row only after `SET app.tenant_id`. Superset's own row fi
 
 Goal: one browser origin on 8090. Sign-in through identity. Warehouse, shipment and route pages call the edge the way the walkthrough does. The monthly dashboard is embedded with the guest token identity already signs. The reference reporting module stays out.
 
-The pages follow the Postman collection in this repository, `modules/ROOT/attachments/ff-logistic.postman_collection.json`, and the hosts in `modules/ROOT/attachments/http-client.env.json`.
+The pages follow the Postman collection and the HTTP Client file in this repository, `modules/ROOT/attachments/ff-logistic.postman_collection.json` and `modules/ROOT/attachments/ff-logistic.http`, and the hosts in `modules/ROOT/attachments/http-client.env.json`.
 
-- [ ] **S09-01 Serve the console** · shared, runtime
+- [x] **S09-01 Serve the console** · shared, runtime
   The reference console (`ff-devops-app/web/console`), nginx, host 8090. `/identity` strips to identity:8085, `/api` goes to the edge. The image is built locally and imported into k3d as `ff-console:local`.
   Done when: `http://localhost:8090` serves the shell and a login through that origin returns a token.
+  Synced to `394f8b0`, Healthy, and `http://localhost:8090/` was 200 (2026-11-22). `nexus.planner` signed in on that origin.
 - [ ] **S09-02 Warehouse, shipment and route pages** · shared
   Warehouses, bins, ASN, pallets. Plan, pickup, departure, delivery with `receivedBy`. Territories and `POST /api/v1/geo/routes`. e-CMR and e-POD are the upload and download links. Handling-units, `GET /ecmr`, `/routes/optimize` and `/otm` are not called.
   Done when: the planner can do those calls from the pages.
-- [ ] **S09-03 Embed the monthly dashboard** · shared, runtime
+  The screens are on the console. This first run opened the report, not these three.
+- [x] **S09-03 Embed the monthly dashboard** · shared, runtime
   The report page POSTs `/identity/api/v1/guest-tokens` with dashboard id `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. The iframe is `http://localhost:8088/embedded/<id>`. `allow_domain_list` includes `http://localhost:8090`.
   Done when: the planner opens the chart for `ff-eu-freight` from the console.
-- [ ] **S09-04 Write the first run** · docs
+  Superset synced to `dc56530`. The frame title was `Deliveries per month (ff-eu-freight)`, November 2026, the 7409 from the Superset page.
+- [x] **S09-04 Write the first run** · docs
+  The first run is in `try-console` (2026-11-22).
 
 ## S10–S13 — Built once, against the edge
 
