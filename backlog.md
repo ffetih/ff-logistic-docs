@@ -304,10 +304,10 @@ The pages follow the Postman collection and the HTTP Client file in this reposit
   The reference console (`ff-devops-app/web/console`), nginx, host 8090. `/identity` strips to identity:8085, `/api` goes to the edge. The image is built locally and imported into k3d as `ff-console:local`.
   Done when: `http://localhost:8090` serves the shell and a login through that origin returns a token.
   Synced to `394f8b0`, Healthy, and `http://localhost:8090/` was 200 (2026-11-22). `nexus.planner` signed in on that origin.
-- [ ] **S09-02 Warehouse, shipment and route pages** · shared
+- [x] **S09-02 Warehouse, shipment and route pages** · shared
   Warehouses, bins, ASN, pallets. Plan, pickup, departure, delivery with `receivedBy`. Territories and `POST /api/v1/geo/routes`. e-CMR and e-POD are the upload and download links. Handling-units, `GET /ecmr`, `/routes/optimize` and `/otm` are not called.
   Done when: the planner can do those calls from the pages.
-  The screens are on the console. This first run opened the report, not these three.
+  `nexus.planner` did them on 2026-11-22. ASN `ASN-2026-1795345906156`, pallet `086900010001000034`, `SHP-17418` delivered to `Dock 2, A. Yilmaz`, `RTE-5008` with `IST-ESN` completed. e-CMR `shp-17418/ecmr.pdf`, e-POD `rte-5008-ist-esn/signature.png`. The steps are in `try-console`.
 - [x] **S09-03 Embed the monthly dashboard** · shared, runtime
   The report page POSTs `/identity/api/v1/guest-tokens` with dashboard id `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. The iframe is `http://localhost:8088/embedded/<id>`. `allow_domain_list` includes `http://localhost:8090`.
   Done when: the planner opens the chart for `ff-eu-freight` from the console.
