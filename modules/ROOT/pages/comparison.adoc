@@ -1,5 +1,5 @@
 = Comparison
-:description: The five load runs side by side: what the caller saw, what the pods cost, and what waited when Kafka, PostgreSQL or routing was stopped.
+:description: The five load runs side by side, and what three changes cost: a new field, a rule in one place, a flow between areas.
 
 Five runs of the same script. Five virtual users, 30 seconds of warm-up, four minutes measured, against the edge. Each iteration plans a shipment, picks it up, departs, delivers it, then reads the warehouses and a road distance, and waits one second. The lab notes keep the full lines: xref:try-load.adoc[Kafka away], xref:try-database.adoc[the database away], xref:try-routing-away.adoc[routing away]. This page puts the figures that differ next to each other.
 
@@ -115,11 +115,78 @@ Stopping PostgreSQL looks the same from both sides. The event is written in the 
 
 Stopping routing stops neither the database nor Kafka. A booked leg does not ask routing again to be picked up and delivered. The plan has a fallback. The direct distance call does not.
 
+[[cost]]
+== What a change cost
+
+Three changes that already landed. A file count is the pull request's changed files. A deployment is an Application whose image the change published, or that had to be synced before the change answered. The try-it pages are their own pull requests in docs, and they are not in the tables.
+
+[[field]]
+=== A new field
+
+S05-05 added one column on each of two aggregates: the shipment's e-CMR, the route stop's e-POD. The columns, the two services and the two migrations are in shared, written once.
+
+[cols="2,2,1,3",options="header"]
+|===
+| | Pull request | Files | Deployments
+
+| Shared, once
+| #9
+| 16
+| none. the cores are libraries
+
+| Modulith
+| #9
+| 5
+| `logistics-app`
+
+| Services
+| #9
+| 10
+| `routing`, then `transportation`
+|===
+
+The modulith's five files are the storage settings and the tests. `logistics-app` is the only folder that changed, so one image, and one sync. The services' ten files are those settings in routing and again in transportation. The recorded sync is those two Applications, routing first (xref:try-documents.adoc#deploy[that run], 2026-11-21, services side). Runtime has no commit for this. RustFS was already in the cluster.
+
+[[rule]]
+=== A rule in one place
+
+S06-02 locks the analytics rows to the tenant and rolls them up per month. One pull request, shared #12, 11 files, all under `analytics-loader`. The modulith has none of them. The services have none of them.
+
+The loader is one image, and one sync of `analytics-loader`. It stands outside the switch, so this cost is the same whichever side is answering on the edge.
+
+[[flow]]
+=== A flow between areas
+
+S05-03 is flow 1. Transportation asks routing for a road leg's distance. The port, the endpoint and the migration are in shared.
+
+[cols="2,2,1,3",options="header"]
+|===
+| | Pull request | Files | Deployments
+
+| Shared, once
+| #7
+| 15
+| none
+
+| Modulith
+| #7
+| 4
+| `logistics-app`
+
+| Services
+| #7
+| 6
+| `transportation`, then `routing` after a forced build
+|===
+
+The modulith's four files are one class in `flows` and the tests. The question is a method call in that process, so routing is not a second Application.
+
+The services' six files are all in transportation, and that image came from the push. The endpoint, `/api/v1/geo/distance`, lives in the routing core in shared. The routing service's folder had not changed, so CI kept its image. The first plan answered `ESTIMATE` with routing up: the old image returned 404. The recorded fix is `gh workflow run ci.yml` in the services repository, which builds every image, then `argocd app sync routing` (xref:try-flows.adoc#flow-1-lesson[that run]). CI rebuilds an image when its own folder changes. A new class in a core reaches a service when that service is built again.
+
 [[open]]
-== What these runs leave open
+== What is still open
 
 * *This is a desk, not a capacity test.* Five users, and a one-second pause. The rate on the clean runs is that pause.
 * *Startup to ready is not measured.* Deleting the pods and timing until they answer is still open.
 * *A slow area is not measured.* The drill stops Kafka, PostgreSQL or the routing service. It has no mode that answers slowly.
-* *The cost of a change is not in these files.* A new field, a new rule in one area, and a new flow between areas are counted from the history, when that count is made.
 * *Two CPU samples are not the clean load.* The routing run's 2232 millicores is two new pods starting. The database runs' CPU is lower because the users spent part of the four minutes waiting.
