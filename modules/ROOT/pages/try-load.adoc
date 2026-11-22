@@ -1,12 +1,56 @@
 = Try it: a load, with Kafka away
-:description: The first measured run of S7, services side: what five virtual users see at the edge, what the pods cost, and where a minute without Kafka waits.
+:description: S7's first measurements, the same five users and the same minute without Kafka, on the services and on the modulith.
 
-xref:runtime::cluster-guide.adoc#load[The load script] runs the walkthrough against the edge: each virtual user plans a shipment, picks it up, departs, delivers it to the Hadimkoy hub, then reads the warehouses and a road distance. A second terminal can stop one part while that runs. This page is the first time both were done together, on the services side. The modulith has not been measured yet, so nothing here is a comparison.
+xref:runtime::cluster-guide.adoc#load[The load script] runs the walkthrough against the edge: each virtual user plans a shipment, picks it up, departs, delivers it to the Hadimkoy hub, then reads the warehouses and a road distance. A second terminal stops Kafka while that runs. k6 says what the caller saw. The drill says what was waiting behind the edge.
 
-The answers are from 2026-11-21. `deploy/load/run.sh 5 4m 30` started at 08:04:24Z: five virtual users, 30 seconds of warm-up, four minutes measured. Twelve seconds later, `deploy/load/drill.sh kafka 60` stopped the broker for a minute. k6 says what the caller saw. The drill says what was waiting behind the edge.
+The pair was run once on each side. The services, on 2026-11-21. The modulith, on 2026-11-22, after the switch below. Five virtual users, 30 seconds of warm-up, four minutes measured, Kafka away for 60 seconds. Startup time is not in these files.
+
+[[run]]
+== How a run is started
+
+The two commands are the same whichever side is active: the edge answers for it. They have to start against a side that is already healthy. During a switch nothing answers on port 8081, and the users would time that gap.
+
+The services run was already on that side, so it began at the two commands. The modulith run began with the switch (xref:switching.adoc#back[the same steps, the other way]), from WSL:
+
+[source,bash]
+----
+cd /mnt/d/dev/workspace/ff-logistic/runtime
+sed -i 's/^active: .*/active: modulith/' deploy/implementation.yaml
+git diff                      # -active: services  +active: modulith
+git commit -am "Switch to the modulith" && git push
+kubectl -n argocd annotate applicationset ff-implementation argocd.argoproj.io/application-set-refresh=true --overwrite
+until argocd app get logistics-app > /dev/null 2>&1; do sleep 5; done
+argocd app sync logistics-app
+argocd app wait logistics-app --health --timeout 300
+argocd app sync edge
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8081/actuator/info
+----
+
+`200` is the modulith. The ApplicationSet deletes the four service Applications by itself, and their pods with them. `logistics-app` then exists as `Missing` and `OutOfSync`: generated, not synced. The sync runs the migration Job, starts the Rollout at 100 %, and runs the application's own smoke test. The edge is last. Its smoke test checks who answers, and it fails if it runs while nobody is behind it.
+
+An expired `argocd` session answers `Unauthenticated` and syncs nothing. Ctrl+C stops the terminal, not a sync Argo CD has already accepted. `argocd relogin`, then `argocd app get logistics-app`: if it is already `Healthy`, do not sync it again. Sync the edge, and read the HTTP code.
+
+Then two terminals, both in `runtime`. The drill starts once the load is printing:
+
+[source,bash]
+----
+deploy/load/run.sh 5 4m 30          # writes load-<side>-<time>.txt
+----
+
+[source,bash]
+----
+deploy/load/drill.sh kafka 60       # writes drill-kafka-<side>-<time>.txt
+----
+
+The load samples CPU and memory at rest, runs the users, then samples again. The drill stops the broker for a minute and, every few seconds, counts deliveries, arrivals, analytics rows and events still in the outbox, until those have caught up. On the services the outbox is `transportation.event_publication`. On the modulith it is `modulith.event_publication`. Flow 2 opens the arrival in-process on the modulith, and through Kafka on the services. Analytics crosses Kafka on both.
+
+[[services]]
+== The services, 2026-11-21
+
+`deploy/load/run.sh 5 4m 30` started at 08:04:24Z. Twelve seconds later the drill stopped the broker.
 
 [[caller]]
-== What the caller saw
+=== What the caller saw
 
 Warm-up is not counted. Of the four minutes that are, Kafka was down for about the first minute (it was scaled back at 08:05:40Z) and up for the rest.
 
@@ -34,7 +78,7 @@ Five users finished 4.69 iterations a second. Each iteration then waits one seco
 Sign-in happened five times, once per user, at the start of the run. A token lasts five minutes and the measured window is four, so it stays off the hot path.
 
 [[pods]]
-== What the pods cost
+=== What the pods cost
 
 `kubectl top`, sampled about every 15 seconds. At rest, before the users started; under load, the highest sample of each pod. CPU is millicores.
 
@@ -67,7 +111,7 @@ The platform both sides share, over the same window:
 At this rate the broker used about as much CPU as the seven service pods together. Identity barely shows: the applications check tokens locally, and five sign-ins are the whole of its work (xref:architecture.adoc#layers[the identity rule]).
 
 [[kafka]]
-== Kafka away for a minute
+=== Kafka away for a minute
 
 The drill counts from its own start (08:04:36Z). `delivered` is shipments delivered, `arrivals` is flow 2, `analytics` is rows the loader stored, `outbox` is events in `transportation.event_publication` not yet handed to Kafka. The four numbers of one line are four queries, one after another, so while traffic is moving the later columns are a few seconds newer. A healthy line can show analytics a handful ahead of delivered for that reason alone.
 
@@ -95,10 +139,111 @@ k6 stopped at about +271s (delivered stays 1225 from then on). The outbox still 
 
 The earlier drill, one shipment and Kafka down for several minutes, waited about seven minutes because of the doubling pause between tries (xref:try-failures.adoc#timeline[that timeline]). Here the outage was a minute. The 412 seconds are a backlog of about a thousand events, emptied on that same pause, while new deliveries kept arriving until the users stopped.
 
-[[shown]]
-== What this run shows, and what it does not
+[[modulith]]
+== The modulith, 2026-11-22
 
-* *The caller and the dock disagree for as long as the backlog lasts.* Deliveries answered in under 30 ms. The warehouse and analytics learned about them up to seven minutes later.
-* *The resident memory is paid at rest.* Load added CPU, almost all of it in transportation, and almost no memory.
-* *The broker is part of the cost of this side.* At five users it matched the services' CPU. The modulith's listeners do not need it for flow 2; both sides need it for analytics, since S6.
-* *One side only.* The same command against the modulith is the next run. Startup time is not in these files.
+The switch above, then the same two commands. The load started at 04:50:20Z. The drill started sixteen seconds later and brought the broker back at +62 s, which is inside the first minute of the measured four. Nothing failed.
+
+=== What the caller saw
+
+[source]
+----
+side: modulith  vus: 5  warm-up: 30s  measured: 4m
+iterations: 1130  (4.71/s)  requests: 7915  (33.0/s)  failed: 0.00%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    36.0    47.7    49.8    50.3
+plan          1130    0.0%    12.7    30.1    46.0    72.2
+shipment      1130    0.0%     3.9    10.4    18.5    28.8
+pickup        1130    0.0%    11.1    21.9    32.1    64.8
+departure     1130    0.0%    11.4    21.7    24.3    68.1
+deliver       1130    0.0%    12.2    21.6    25.0    62.6
+warehouses    1130    0.0%     3.6     6.4     9.1    11.0
+distance      1130    0.0%     1.8     3.5     4.9    13.1
+----
+
+`plan` is again the slow request, and it is faster than on the services: median 12.7 ms against 20.1, p95 30.1 against 44.5. That request is flow 1. Here it is a method call. There it is HTTP to routing. A direct `distance` call is the fastest line on both sides (1.8 ms here, 2.3 there). The three writes sit in the same band, around 11 to 12 ms at the median. The slowest delivery was 62.6 ms, against 26.5 on the services. The rate is the same shape, 4.71 iterations a second against 4.69, because each iteration still waits one second.
+
+=== What the pods cost
+
+Four pods, one process. CPU is millicores.
+
+[cols="3,1,1,1,1",options="header"]
+|===
+| | At rest, CPU | At rest, MiB | Under load, CPU | Under load, MiB
+
+| logistics-app (4) | 24 | 1449 | 1044 | 1835
+|===
+
+At rest the four pods use 1449 MiB. The seven service pods used 2413. Under load the modulith's CPU rose to 1044, against 598 for the services, and the memory rose by 386 MiB, against 70 there. The work the services spread across transportation, warehousing, routing and the gateway is inside these four pods.
+
+The shared platform, highest sample in the same window. The window includes the broker coming back to a full outbox, so Kafka's figure is that peak:
+
+[cols="3,1,1",options="header"]
+|===
+| | CPU, millicores | MiB
+
+| Kafka | 832 | 411
+| PostgreSQL | 80 | 172
+| analytics loader | 38 | 255
+| identity | 5 | 297
+| *shared platform* | *955* | *1135*
+|===
+
+=== Kafka away for a minute
+
+The outbox column is `modulith.event_publication`. Arrivals did not stop. Analytics did.
+
+[source]
+----
+  time  kafka     delivered  arrivals analytics  outbox
+   +1s  up                2         5         5       0
+   +8s  away             32        35         7      84
+  +62s  away            285       285         7     834
+-- kafka back at +62s
+  +81s  back            375       375         7     700
+  +87s  back            405       405       171     700
+ +258s  back           1200      1200      1132     200
+ +293s  back           1200      1200      1200       0
+-- caught up 231s after kafka came back
+----
+
+From the moment the broker was gone, arrivals stayed with the deliveries: flow 2 is a call in the same process, after the commit. Analytics froze at 7 until +87 s, about twenty-five seconds after the scale-up, then started reading. The outbox grew by about three rows per delivery, the same two `ShipmentProgressed` events and one `ShipmentDelivered`, and stepped down once the broker accepted them. k6 stopped at about +258 s, on 1200 deliveries. The last analytics rows and the last outbox rows cleared together at +293 s.
+
+1200 delivered, 1200 arrivals, 1200 analytics, an empty outbox. The caller, from the table above, did not see the minute. The dock did not wait for it either. Analytics did, for just under four minutes after the broker came back. On the services the dock waited too, and the same backlog took 412 seconds.
+
+[[shown]]
+== What the two runs show, and what they do not
+
+[cols="2,3,3",options="header"]
+|===
+| | Services | Modulith
+
+| Caller, failures
+| 0 %
+| 0 %
+
+| `plan`, median / p95
+| 20.1 / 44.5 ms
+| 12.7 / 30.1 ms
+
+| Pods, at rest
+| 7 pods, 27 millicores, 2413 MiB
+| 4 pods, 24 millicores, 1449 MiB
+
+| Pods, under load
+| 598 millicores, 2483 MiB
+| 1044 millicores, 1835 MiB
+
+| While Kafka is away
+| arrivals and analytics freeze
+| arrivals keep up, analytics freezes
+
+| Caught up after Kafka
+| 412 s
+| 231 s
+|===
+
+* *Flow 1 is the request that moves.* Booking a road leg asks routing. A method call against an HTTP call is the whole of the difference in `plan`. The writes, and the direct distance call, are already short on both sides.
+* *Flow 2 is where a minute without Kafka is felt.* On the services the dock learns late. On the modulith the dock learns in-process, and only analytics, which crosses Kafka on both sides, waits.
+* *Memory is paid at rest, and the modulith pays for fewer processes.* Load added CPU on both. The services added almost no memory. The modulith added some, and stayed the smaller set.
+* *These are two runs of five users, one minute of Kafka, not a capacity test.* The one-second pause sets the rate. Startup time, a database that is away, and a stopped area are not in these files.
