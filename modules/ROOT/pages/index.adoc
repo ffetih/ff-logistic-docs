@@ -1,7 +1,7 @@
 = FF Logistic
-:description: One logistics product, built as a modular monolith and as microservices, on one platform, and compared.
+:description: One logistics product, built as a modular monolith and as microservices, on one Kubernetes GitOps platform, and compared with measurements.
 
-One logistics product, built twice: as a *modular monolith* and as *microservices*, on the same platform, behind the same switch, and then measured.
+One logistics product, built twice: as a *modular monolith* and as *microservices*, on the same Kubernetes GitOps platform, behind the same switch, and then measured under load and failure.
 
 == The question
 
@@ -12,23 +12,110 @@ Think of one recipe book and two kitchens. In the first kitchen, every cook stan
 [mermaid]
 ....
 flowchart LR
-  subgraph once ["written once"]
-    R["the business rules<br/>warehousing · transportation · routing"]
+  subgraph once ["written once (shared domain jars)"]
+    R["warehousing · transportation · routing · standards"]
   end
-  R --> M["modulith<br/>one process<br/>method calls, in-process events,<br/>one transaction"]
-  R --> S["services<br/>four processes<br/>HTTP, Kafka through an outbox,<br/>eventual consistency"]
-  M & S --> O(["the same outside:<br/>URLs · tables · topics · tokens"])
+  R --> M["modulith<br/>one process<br/>method calls · in-process events ·<br/>one transaction"]
+  R --> S["services<br/>four processes<br/>HTTP + timeout/fallback · outbox → Kafka ·<br/>eventual consistency"]
+  M & S --> O(["the same outside:<br/>URLs · tables · topics · tokens · BI"])
 ....
+
+== Headline measurements
+
+Five virtual users, four minutes measured against the edge, plus 60-second failure drills (xref:comparison.adoc[full comparison]):
+
+[.kpi-grid]
+--
+[.kpi]
+****
+12.7 ms vs 20.1 ms
+
+Flow 1 (`plan`) median latency — in-process call on modulith vs HTTP hop to routing on services (p95: 30.1 vs 44.5 ms).
+****
+
+[.kpi]
+****
+1,449 vs 2,413 MiB
+
+Idle memory footprint — 4 modulith pods vs 7 service pods serving the identical API surface.
+****
+
+[.kpi]
+****
+0% lost
+
+Deliveries under a 60 s Kafka outage on both sides — transactional outbox drained cleanly once the broker returned.
+****
+
+[.kpi]
+****
+16 s startup
+
+Pod delete to last pod Ready on both sides, with zero-downtime canary rollouts and automated health analysis.
+****
+--
+
+== Engineering scope
+
+[.pillar-grid]
+--
+[.pillar]
+.Application Architecture & Backend
+****
+* *Hexagonal domain cores*: `standards`, `warehousing`, `transportation`, `routing` as reusable jars verified by Spring Modulith (`ApplicationModules.verify()`).
+* *Event-driven consistency*: per-process transactional outbox (`ff-base-events`), Apache Kafka 4.2 (KRaft), idempotent consumers, dead-letter topics, and contract tests (`ff-contracts`).
+* *Real logistics domain*: GS1 SSCC/GLN check digits, ISO 6346 containers, EN 16258 / ISO 14083 CO₂e footprint, Timefold route optimization with time windows.
+* *Defense-in-depth multi-tenancy*: Keycloak facade + local JWKS, presigned write-once S3 (RustFS), PostgreSQL `FORCE RLS`, Superset guest tokens (xref:security.adoc[Security & Multi-Tenancy]).
+****
+
+[.pillar]
+.GitOps, Progressive Delivery & Reliability
+****
+* *Declarative GitOps*: Argo CD App-of-Apps (`ff-root`) and a Matrix `ApplicationSet` (`ff-implementation`) that switches modulith ↔ services in one Git commit.
+* *Progressive delivery*: Argo Rollouts canary releases with `AnalysisTemplate` health gates, PreSync database/Flyway Jobs and PostSync smoke tests.
+* *Multi-repo CI/CD*: reusable GitHub Actions workflows across six repositories, GHCR image publishing, values kept next to code (xref:decisions.adoc#d8[decision 8]).
+* *Measured resilience*: repeatable k6 load scenarios and failure drills (Kafka, PostgreSQL and routing stopped under load).
+****
+--
+
+== The running system
+
+.Console: route optimization on an OpenStreetMap canvas (`RTE-5005`, `IST-EU`)
+image::console/routing.png[FF Logistics Console showing territory IST-EU, route RTE-5005 and stops mapped across Istanbul]
+
+.Console: embedded Apache Superset dashboard scoped to `ff-eu-freight` via guest token and PostgreSQL RLS
+image::console/report.png[Embedded Superset monthly deliveries chart inside the FF Logistics Console for tenant ff-eu-freight]
+
+.Argo CD: all 13 Applications Healthy and Synced, managed declaratively from Git
+image::argocd/applications.png[Argo CD Applications list showing all 13 platform, shared, and active implementation applications Healthy and Synced]
+
+.Argo Rollouts: `logistics-app` canary Rollout, `AnalysisTemplate`, PreSync migration Job and PostSync smoke test
+image::argocd/logistics-app.png[Argo CD resource tree for logistics-app with Rollout, four pods, AnalysisTemplate, canary Service, PreSync migrate Job and PostSync smoke-test Job]
+
+== Technology stack
+
+[cols="2,5",options="header"]
+|===
+| Layer | Stack
+
+| Language & Runtime | Java 25 (virtual threads), Spring Boot 4.1, Spring Modulith 2.1, Maven Wrapper
+| Data & Analytics | PostgreSQL 17, Flyway (per-area history tables), PostgreSQL `FORCE RLS`, Apache Superset 4.1
+| Messaging & Contracts | Apache Kafka 4.2 (KRaft), transactional outbox (`event_publication`), JSON contract tests (`ff-contracts`)
+| Optimization & Storage | Timefold Solver (time windows), RustFS (S3-compatible, SigV4 presigned write-once links)
+| Identity & Edge | Keycloak 26.8, dedicated Identity facade + JWKS, nginx single-origin console & gateway
+| GitOps & Delivery | k3d, Argo CD 3.6 (App-of-Apps, ApplicationSet), Argo Rollouts 1.10, Helm, Kustomize, GitHub Actions, GHCR, k6
+|===
 
 == Where to go next
 
-[cols="1,3"]
+[cols="2,4",options="header"]
 |===
-| xref:architecture.adoc[Architecture] | The layers, the repositories, one core with two wirings, the switch, a delivery on each side
-| xref:decisions.adoc[Decisions] | Why it is built this way, and what each choice costs
-| xref:plan.adoc[Plan] | The sprints, and where the work stands
-| xref:glossary.adoc[Glossary] | The terms used throughout
-| xref:comparison.adoc[Comparison] | Five runs of the same load: latency, pods, and a stopped Kafka, database or routing service
+| Reading path | Start here
+
+| *Architect review (5 min)* | xref:architecture.adoc[Architecture] → xref:comparison.adoc[Comparison] → xref:security.adoc[Security & Multi-Tenancy] → xref:decisions.adoc[Decisions]
+| *DevOps & GitOps review* | xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:switching.adoc[Switching sides]
+| *Try it yourself* | xref:runtime::cluster-guide.adoc[Cluster guide] → xref:walkthrough.adoc#collection[Walkthrough + Postman / IntelliJ HTTP collection]
+| *Roadmap* | xref:plan.adoc[Plan] (S0–S9 completed; S10–S13 partner gateways, tracing, multi-cluster)
 |===
 
-The code is in six repositories under https://github.com/ffetih[github.com/ffetih], all named `ff-logistic-*`.
+The code lives across six repositories under https://github.com/ffetih?tab=repositories&q=ff-logistic[github.com/ffetih], all named `ff-logistic-*`.

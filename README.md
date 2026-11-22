@@ -6,7 +6,18 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> Status: **S6, events out**. The analytics loader reads delivered shipments from Kafka into a database of its own, locked to the tenant with row-level security and rolled up per month, exactly. The modulith now sends the same events to Kafka as the services, checked by one contract test in shared (`ff-contracts`): a delivery made on either side lands in the same table, and the loader cannot tell which side sent it. The plan is in [backlog.md](backlog.md); the documentation site is at [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/).
+> **Live Documentation Site:** [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/) · **Author:** [Fatih Fetih (LinkedIn)](https://www.linkedin.com/in/fatihfetih/)
+>
+> **Status:** **S0–S9 complete** — both implementations (`modulith` and `services`), measured k6 benchmarks & failure drills (S7), Apache Superset with PostgreSQL `FORCE RLS` & guest tokens (S8), and the single-origin Console UI on `:8090` (S9) are running on the cluster. Next: S10–S13 (partner gateways, Jaeger tracing, multi-cluster + Argo Workflows). See [backlog.md](backlog.md).
+
+### Measured highlights ([full comparison](https://ffetih.github.io/ff-logistic-docs/ff-logistic/comparison.html))
+
+| Metric | Modular Monolith (4 pods) | Microservices (7 pods) |
+| :--- | :---: | :---: |
+| Flow 1 (`plan`) median / p95 latency | **12.7 ms / 30.1 ms** | 20.1 ms / 44.5 ms |
+| Idle memory footprint | **1,449 MiB** | 2,413 MiB |
+| 60 s Kafka outage under load | **0% failed, 0 lost** (arrivals uninterrupted) | **0% failed, 0 lost** (outbox drained in 412 s) |
+| Pod delete → Ready | **16 s** | **16 s** |
 
 ---
 

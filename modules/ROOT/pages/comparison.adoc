@@ -47,6 +47,15 @@ The Kafka pair is the clean load. Nothing failed, and no workload pod was restar
 
 On the two clean runs the rate is the same, 4.69 and 4.71 iterations a second, because the one-second pause sets it. `plan` is the request that moves: median 12.7 ms against 20.1, p95 30.1 against 44.5. The three writes sit together on both sides, around 10 to 12 ms at the median. A direct distance call, the same two points and no shipment, is the fastest line on both (1.8 ms on the modulith, 2.3 on the services).
 
+[mermaid]
+....
+xychart-beta
+  title "Flow 1 (plan) latency in ms — clean load"
+  x-axis ["Modulith median", "Services median", "Modulith p95", "Services p95"]
+  y-axis "Milliseconds" 0 --> 50
+  bar [12.7, 20.1, 30.1, 44.5]
+....
+
 The database runs keep that `plan` gap for the plans that got a connection (12.2 against 23.9 at the median). Five plans on each side waited and gave up at 30.0 s. Those five iterations stopped there. Every request after a successful plan succeeded. The rate fell to 3.65 and 3.53, which is five users held for about half a minute.
 
 With routing stopped, no plan failed. The median stayed 21.6 ms. The p95 is 1.01 s: transportation waited its 1 s connect timeout and the core booked the straight-line estimate. The scenario's own distance call has no estimate. 7.8 % of them waited the gateway's 2 s and failed, and that is the whole of the 1.11 %. A failed distance does not stop the iteration, so the deliveries were still sent. k6's bar for the scenario is under 1 % failed. This run crossed it.
@@ -74,6 +83,15 @@ CPU is millicores. These two rows are the clean load, sampled before the users a
 |===
 
 Memory is paid at rest. Four `logistics-app` pods held 1449 MiB with nobody calling. Seven service pods held 2413. Under the same users the modulith's CPU rose to 1044, because the work the services spread across transportation, warehousing, routing and the gateway sits in those four processes. On the services, transportation took 379 of the 598.
+
+[mermaid]
+....
+xychart-beta
+  title "Memory footprint in MiB — 4 modulith pods vs 7 service pods"
+  x-axis ["Modulith at rest", "Services at rest", "Modulith under load", "Services under load"]
+  y-axis "MiB" 0 --> 2800
+  bar [1449, 2413, 1835, 2483]
+....
 
 The modulith did not give that memory back. At the start of its database run the same four pods held 1847 MiB, against 1835 under the Kafka load. The services side's rest figure moves with the age of the pods: 2413 MiB on the Kafka run, 1926 MiB a few minutes after the switch back, 2296 MiB before routing was stopped. Under the database load the services reached 2262 MiB, and transportation was 683 of 982 millicores. Under the routing load the highest sample is 2232 millicores, and almost all of it is the two routing pods the drill had just started (921 and 916). That sample caught them starting.
 
@@ -211,3 +229,31 @@ Sixteen seconds on the clock for both, from the delete to the last pod Ready. On
 * *This is a desk, not a capacity test.* Five users, and a one-second pause. The rate on the clean runs is that pause.
 * *A slow area is not measured.* The drill stops Kafka, PostgreSQL or the routing service. It has no mode that answers slowly while the process stays Ready. Stopping routing is the other drill. This one stays open, and it is not written back onto this sprint later.
 * *Two CPU samples are not the clean load.* The routing run's 2232 millicores is two new pods starting. The database runs' CPU is lower because the users spent part of the four minutes waiting.
+
+[[verdict]]
+== When to choose which
+
+What these measurements say for a real team making this call:
+
+[cols="2,3,3",options="header"]
+|===
+| Dimension | Modular monolith wins when | Microservices win when
+
+| *Baseline cost & latency*
+| You want ~40% less idle RAM (1,449 vs 2,413 MiB) and ~37% lower cross-area median latency (12.7 vs 20.1 ms) without network hops.
+| Individual areas have sharply different CPU or scaling profiles (for example heavy Timefold optimization isolated from fast shipment writes).
+
+| *Dependency outages*
+| Internal area-to-area flows (flow 2: delivery → arrival) must keep moving even when the message broker is down for a minute.
+| You need independent fault isolation so one degraded area falls back cleanly (`ESTIMATE` after 1 s) without risking the rest of the process.
+
+| *Change & release cost*
+| Cross-area features are frequent: one PR, one image, one canary Rollout instead of coordinating multiple services and forced rebuilds of shared cores.
+| Autonomous teams own separate deployment cadences, languages, or strict blast-radius boundaries per service.
+
+| *Database & security*
+| Every area shares one PostgreSQL instance with per-area Flyway history tables and Spring Modulith compile/test boundaries — zero distributed transactions.
+| Regulatory or scale requirements demand physically separate databases, credentials, and network policies per bounded context.
+|===
+
+Because both implementations share the same hexagonal domain cores, starting as a modular monolith here does not lock out microservices: the ports and event contracts are already in place when the team or workload actually justifies the hatches.

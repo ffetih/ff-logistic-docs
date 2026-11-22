@@ -39,6 +39,8 @@ Rapor, then *Gömülü BI panosu*. The page posts `/identity/api/v1/guest-tokens
 
 ✅ The frame title was `Deliveries per month (ff-eu-freight)`. The bar is November 2026, the 7409 from xref:try-superset.adoc#chart[step 3 of the Superset page].
 
+image::console/report.png[Console report page embedding the Superset monthly deliveries chart for ff-eu-freight]
+
 Depo, Sevkiyat and Rota call the edge on this same origin, with the bodies in the walkthrough collection (xref:walkthrough.adoc#collection[the collection]).
 
 [[warehouse]]
@@ -48,6 +50,8 @@ Depo. `IST-HDK` and rack `A-01-01` were already there. *ASN aç* created `ASN-20
 
 ✅ The page showed SSCC `086900010001000034` and *rafa kondu*. The ASN moved to `RECEIVING`, 60/120.
 
+image::console/warehousing.png[Console Depo page showing IST-HDK, rack A-01-01, and ASNs in RECEIVED and RECEIVING states]
+
 [[shipment]]
 == 5. That pallet, delivered
 
@@ -55,12 +59,16 @@ Depo. `IST-HDK` and rack `A-01-01` were already there. *ASN aç* created `ASN-20
 
 ✅ `SHP-17418` planned. *Teslim al*, *Yola çık*, then *Teslim et* with `Dock 2, A. Yilmaz`. The row ended `Teslim edildi`. CO₂e saved 756 kg, 64.5 percent.
 
+image::console/shipments.png[Console Sevkiyat page showing SHP-17418, multimodal leg form, CO2e savings, and e-CMR upload and download controls]
+
 [[route]]
 == 6. A route, then the two documents
 
 Rota. Territory `IST-EU` was already there. *Sırala* used plate `34 FF 0418`, depot 41.10, 28.65, and the two stops on the form, `IST-ESN` and `IST-KDK`.
 
 ✅ `RTE-5008`: 47.7 km, 102 minutes, 600 kg, 17.1 percent full. Esenyurt first (9.9 km, arrival 15 minutes), Kadikoy second (37.9 km, arrival 87 minutes). *Durağı tamamla* on `IST-ESN` with `Dock 2, Route Driver` left that stop `COMPLETED`.
+
+image::console/routing-simulation.png[Console Rota page showing territory IST-EU, route plan on an OpenStreetMap Leaflet canvas, and live stop simulation]
 
 The file buttons ask the edge for a link and then talk to RustFS at `localhost:9000`. The bucket `ff-documents` allows origin `http://localhost:8090` (and `http://localhost:5173`) for `GET`, `PUT` and `HEAD`. Before that rule the page said `Depolama sunucusuna ulaşılamadı`: the preflight came back without `access-control-allow-origin`.
 
