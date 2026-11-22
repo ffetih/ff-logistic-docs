@@ -71,4 +71,4 @@ At rest, before the drill, seven pods held 47 millicores and 2296 MiB. Under loa
 * *The plan survives a routing service that is gone.* It waits 1 s and books the straight-line estimate. No plan failed.
 * *The direct distance call does not.* It waits the gateway's 2 s and fails. That is the whole of the 1.11 %.
 * *Nothing queues.* Deliveries, arrivals and analytics stayed together, and the outbox stayed empty. Stopping routing is not stopping the database, and it is not stopping Kafka.
-* *The modulith cannot run this drill.* Routing there is an area inside `logistics-app`, not a process of its own. The five runs sit together in xref:comparison.adoc[the comparison]. Startup time is still not in these files.
+* *The modulith cannot run this drill.* Routing there is an area inside `logistics-app`, not a process of its own. The five runs sit together in xref:comparison.adoc[the comparison]. Startup to ready is in xref:comparison.adoc#startup[the comparison].

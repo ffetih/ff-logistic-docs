@@ -250,18 +250,19 @@ Flows 1 and 3 (the road distance, the route stop with e-POD) both involve routin
 
 Goal: numbers instead of opinions.
 
-- [ ] **S07-01 Add a load script against the edge** · runtime
+- [x] **S07-01 Add a load script against the edge** · runtime
   k6 in the cluster: the walkthrough as a scenario, run against whichever side is active.
-- [ ] **S07-02 Measure both sides** · docs
+  `deploy/load/run.sh`, used for every run in this sprint.
+- [x] **S07-02 Measure both sides** · docs
   Memory at rest and under load, startup to ready, p50/p95 per request type, pods and CPU.
-  Both sides, five users, four minutes, recorded in `try-load` (2026-11-21 services, 2026-11-22 modulith). 0% failed on each. Startup not measured.
+  Both sides, five users, four minutes, recorded in `try-load` (2026-11-21 services, 2026-11-22 modulith). 0% failed on each. Startup to ready, both sides, 2026-11-22, in `comparison`: 16 s from delete to the last pod Ready, the images already on the node.
 - [ ] **S07-03 Run the failure drills on both sides** · docs
   Database away, Kafka away, one area away, a slow area: what the user sees, what is lost, what recovers by itself.
-  Kafka away during that load, both sides. On the services, arrivals and analytics froze and the outbox drained 412 s after the broker came back. On the modulith, arrivals kept up and analytics caught up 231 s after. Nothing lost, and the caller did not see it either time. PostgreSQL away, both sides (`try-database`): five plans failed at 30 s on each, everything after a successful plan succeeded, and the first readable sample was already caught up, with an empty outbox. Routing away, services side only (`try-routing-away`): no plan failed, it fell back to the straight-line estimate after 1 s, and 7.8 % of the direct distance calls failed at the gateway's 2 s. Deliveries never queued. A slow area, and startup, are still open.
+  Kafka away during that load, both sides. On the services, arrivals and analytics froze and the outbox drained 412 s after the broker came back. On the modulith, arrivals kept up and analytics caught up 231 s after. Nothing lost, and the caller did not see it either time. PostgreSQL away, both sides (`try-database`): five plans failed at 30 s on each, everything after a successful plan succeeded, and the first readable sample was already caught up, with an empty outbox. Routing away, services side only (`try-routing-away`): no plan failed, it fell back to the straight-line estimate after 1 s, and 7.8 % of the direct distance calls failed at the gateway's 2 s. Deliveries never queued. Startup is in `comparison`. A slow area is still open.
 - [x] **S07-04 Count the cost of a change** · docs
   Three real changes, in `comparison`: S05-05's document columns (shared 16 files, modulith 5 and one deployment, services 10 and two), S06-02's analytics rule (shared only, 11 files, one deployment), S05-03 flow 1 (shared 15, modulith 4 and one deployment, services 6, plus a forced build of routing).
-- [ ] **S07-05 Write the comparison guide** · docs
-  The five runs and the three changes are in `comparison` (2026-11-22). Startup and a slow area are not.
+- [x] **S07-05 Write the comparison guide** · docs
+  The five runs, the three changes and startup to ready are in `comparison` (2026-11-22). A slow area is not.
 - [ ] **S07-06 Ship a sprint with one workflow** · runtime
   The `ship` chain as a workflow in runtime (a release train): started with a branch name, it merges each repository's pull request in the build order and waits for its run. Needs a token that may act on the other repositories. Optional.
 

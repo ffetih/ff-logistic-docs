@@ -1,5 +1,5 @@
 = Comparison
-:description: The five load runs side by side, and what three changes cost: a new field, a rule in one place, a flow between areas.
+:description: The five load runs side by side, what three changes cost, and startup to ready on both sides.
 
 Five runs of the same script. Five virtual users, 30 seconds of warm-up, four minutes measured, against the edge. Each iteration plans a shipment, picks it up, departs, delivers it, then reads the warehouses and a road distance, and waits one second. The lab notes keep the full lines: xref:try-load.adoc[Kafka away], xref:try-database.adoc[the database away], xref:try-routing-away.adoc[routing away]. This page puts the figures that differ next to each other.
 
@@ -183,10 +183,31 @@ The modulith's four files are one class in `flows` and the tests. The question i
 
 The services' six files are all in transportation, and that image came from the push. The endpoint, `/api/v1/geo/distance`, lives in the routing core in shared. The routing service's folder had not changed, so CI kept its image. The first plan answered `ESTIMATE` with routing up: the old image returned 404. The recorded fix is `gh workflow run ci.yml` in the services repository, which builds every image, then `argocd app sync routing` (xref:try-flows.adoc#flow-1-lesson[that run]). CI rebuilds an image when its own folder changes. A new class in a core reaches a service when that service is built again.
 
+[[startup]]
+== Startup to ready
+
+Both sides, on 2026-11-22, with that side already answering. The pods were deleted and timed until Ready. The images were already on the node, so this is a restart. It is not an image pull, and it is not the gap in a switch, when nothing is behind the edge.
+
+[cols="2,2,2,3",options="header"]
+|===
+| | Deleted | Ready | From start to Ready
+
+| Services
+| 06:18:25Z
+| 06:18:41Z
+| gateway 11 s. routing, transportation and warehousing, 15 s
+
+| Modulith
+| 06:29:25Z
+| 06:29:41Z
+| four `logistics-app` pods, 16 s each
+|===
+
+Sixteen seconds on the clock for both, from the delete to the last pod Ready. On the services the edge answered 404 at that moment, which is that side. On the modulith the edge did not connect at 06:29:42Z. The pods were 26 s old on the next read, and it was 200.
+
 [[open]]
 == What is still open
 
 * *This is a desk, not a capacity test.* Five users, and a one-second pause. The rate on the clean runs is that pause.
-* *Startup to ready is not measured.* Deleting the pods and timing until they answer is still open.
-* *A slow area is not measured.* The drill stops Kafka, PostgreSQL or the routing service. It has no mode that answers slowly.
+* *A slow area is not measured.* The drill stops Kafka, PostgreSQL or the routing service. It has no mode that answers slowly while the process stays Ready. Stopping routing is the other drill. This one stays open, and it is not written back onto this sprint later.
 * *Two CPU samples are not the clean load.* The routing run's 2232 millicores is two new pods starting. The database runs' CPU is lower because the users spent part of the four minutes waiting.
