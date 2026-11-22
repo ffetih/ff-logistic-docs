@@ -1,0 +1,13 @@
+    <meta property="og:site_name" content="{{site.title}}">
+    <meta property="og:title" content="{{#if (eq page.title site.title)}}FF Logistic — Modular Monolith vs Microservices, Measured{{else}}{{page.title}} — {{site.title}}{{/if}}">
+    {{#with page.description}}
+    <meta property="og:description" content="{{this}}">
+    {{/with}}
+    <meta property="og:type" content="website">
+    {{#with page.canonicalUrl}}
+    <meta property="og:url" content="{{this}}">
+    {{/with}}
+    {{#with site.url}}
+    <meta property="og:image" content="{{this}}/ff-logistic/_images/argocd/applications.png">
+    {{/with}}
+    <meta name="twitter:card" content="summary_large_image">

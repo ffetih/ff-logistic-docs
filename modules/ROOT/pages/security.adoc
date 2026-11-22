@@ -1,0 +1,61 @@
+= Security & Multi-Tenancy
+:description: End-to-end tenant isolation across Keycloak, the identity facade, RustFS presigned write-once links, PostgreSQL row-level security and Superset guest tokens.
+
+FF Logistic serves multiple freight tenants on shared infrastructure (`ff-eu-freight`, `ff-tr-distribution`, and any tenant created later). Tenant isolation is enforced at every boundary rather than trusted to a single layer: the identity token, the application use cases, object-storage keys, the database policy and the BI connection all independently refuse cross-tenant access.
+
+== End-to-end trust flow
+
+[mermaid]
+....
+flowchart LR
+  U["Browser / Client"] -->|"1. POST /sessions"| ID["identity :8085"]
+  ID -->|"OIDC"| KC["Keycloak<br/>(isolated IdP)"]
+  U -->|"2. Bearer JWT<br/>(tenant_id + roles)"| EDGE["edge :8081<br/>(local JWKS verify)"]
+  EDGE -->|"3a. tenant-scoped rows"| PG1[("ff_logistics")]
+  EDGE -->|"3b. SigV4 presigned PUT<br/>If-None-Match: *"| RF["RustFS :9000<br/>bucket/<tenant>/..."]
+  U -->|"4. POST /api/v1/guest-tokens<br/>(caller tenant enforced)"| ID
+  U -->|"5. X-GuestToken (HS256)"| SU["Superset :8088<br/>DB_CONNECTION_MUTATOR<br/>NullCache"]
+  SU -->|"6. analytics_reader<br/>-c app.tenant_id=<tenant>"| PG2[("ff_logistics_analytics<br/>FORCE RLS<br/>REVOKE set_config")]
+....
+
+== The six layers of isolation
+
+[cols="2,3,3",options="header"]
+|===
+| Layer | Mechanism | What it prevents
+
+| *1. Identity facade & local JWKS*
+| Only `identity` talks to Keycloak. Domain applications verify JWT signatures locally against `identity`'s cached `/jwks` endpoint. Unknown JSON fields on security APIs fail with `400` (`fail-on-unknown-properties: true`).
+| Direct IdP coupling, forged tokens, and silent mass-assignment of fields such as `tenantId` during user or integration-client creation.
+
+| *2. Strict tenant identifier (`TenantIds`)*
+| One regex (`[a-z0-9][a-z0-9-]{1,63}`) enforced at token conversion (`ff-base-tenant`, `IdentityJwtAuthenticationConverter`) before any controller runs.
+| Path traversal in S3 keys, SQL/clause injection, and tenant collisions from case or whitespace normalization.
+
+| *3. Role-based access & single-origin Console*
+| Realm roles (`TENANT_ADMIN`, `LOGISTICS_PLANNER`, `WAREHOUSE_OPERATOR`, `DISPATCHER`, `REPORT_VIEWER`) guard every endpoint. The Console serves `/identity` and `/api` behind one nginx origin (`localhost:8090`).
+| Privilege escalation across roles and browser cross-origin credential leakage.
+
+| *4. Write-once object storage (RustFS)*
+| Applications never proxy file bytes. They sign short-lived (15 min) SigV4 `PUT` links scoped to `<bucket>/<tenant_id>/...` with `If-None-Match: *` bound into `X-Amz-SignedHeaders`.
+| Cross-tenant object access and overwriting legal documents (e-CMR, e-POD) — enforced both by the application (`409`) and by RustFS (`412` / `403`).
+
+| *5. PostgreSQL `FORCE ROW LEVEL SECURITY`*
+| Every table in `ff_logistics_analytics` enables and forces RLS. Dashboards connect as `analytics_reader` (`NOSUPERUSER NOBYPASSRLS`). A session without `app.tenant_id` sees zero rows, and `EXECUTE` on `pg_catalog.set_config` is revoked from `PUBLIC`.
+| Cross-tenant reads from a forgotten `WHERE` clause or from an inline SQL expression attempting to widen session scope mid-query.
+
+| *6. Superset guest tokens & connection mutator*
+| `identity` signs short-lived (5 min) HS256 guest tokens carrying the caller's own `app.tenant_id` (naming another tenant in the body returns `403`). Superset's `DB_CONNECTION_MUTATOR` applies `-c app.tenant_id=<tenant>` at connection start on a fresh connection, `DATA_CACHE_CONFIG` uses `NullCache`, and `TenantEmbedViewer` has no SQL Lab or `all_datasource_access` permissions.
+| Cross-tenant dashboard embedding, chart cache bleed between tenants, and arbitrary SQL exploration by embedded viewers.
+|===
+
+== What is verified by tests and live runs
+
+* *Cross-tenant user & client creation refused*: `IdentityApiTest` proves a `TENANT_ADMIN` of `ff-eu-freight` cannot create a user or integration client in `ff-tr-distribution` (`400`) and cannot obtain a token for platform-internal clients (`401`).
+* *Cross-tenant guest token refused*: `POST /api/v1/guest-tokens` with another tenant in the body returns `403 Forbidden` (xref:try-superset.adoc#token[recorded run]).
+* *Write-once documents refused three ways*: requesting a second upload link returns `409`, re-using the old signed link returns `412`, and dropping `If-None-Match: *` breaks the signature with `403` (xref:try-documents.adoc#refusals[recorded run]).
+* *Database RLS verified directly and through Superset*: `analytics_reader` sees `0` rows without `SET app.tenant_id`, sees only its tenant's rows with it, is refused `set_config()` with `permission denied` (xref:try-analytics.adoc#reader[analytics run]), and an `ff-tr-distribution` guest token returns `[]` against `ff-eu-freight`'s monthly chart (xref:try-superset.adoc#chart[Superset run]).
+
+== Local-cluster credentials boundary
+
+Credentials committed under `runtime/deploy/platform/*/secret.yaml` and `ff-logistics-realm.json` are local-only example values so a fresh k3d cluster starts with zero manual setup. In shared or production clusters those Kubernetes Secrets are sourced from an external secret store rather than Git.

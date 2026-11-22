@@ -1,9 +1,9 @@
 {{!-- Replaces the default UI's sample menu (Home, Products, Services, Download). --}}
 <header class="header">
-  <nav class="navbar">
+  <nav class="navbar" aria-label="Primary">
     <div class="navbar-brand">
       <a class="navbar-item" href="{{{or site.url siteRootPath}}}">{{site.title}}</a>
-      <button class="navbar-burger" data-target="topbar-nav">
+      <button class="navbar-burger" type="button" aria-label="Toggle navigation" data-target="topbar-nav">
         <span></span>
         <span></span>
         <span></span>
@@ -11,9 +11,12 @@
     </div>
     <div id="topbar-nav" class="navbar-menu">
       <div class="navbar-end">
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/comparison.html">Comparison</a>
         <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/architecture.html">Architecture</a>
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/security.html">Security</a>
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/gitops.html">GitOps</a>
         <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/decisions.html">Decisions</a>
-        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/plan.html">Plan</a>
+        <a class="navbar-item" href="{{{siteRootPath}}}/ff-logistic/walkthrough.html">Walkthrough</a>
         <div class="navbar-item has-dropdown is-hoverable">
           <a class="navbar-link" href="https://github.com/ffetih?tab=repositories&amp;q=ff-logistic">Repositories</a>
           <div class="navbar-dropdown">
