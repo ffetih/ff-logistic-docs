@@ -382,5 +382,5 @@ The loader's first start, the data as a dashboard sees it, then a delivery on th
 
 What exists: a load script in runtime. It runs this walkthrough as a k6 scenario against the edge, and a second terminal can stop Kafka while the users run. What it shows, on each side: what five users see, what the pods cost, and where a minute without Kafka waits. The modulith run starts with the switch. The edge has to be answering before the users do.
 
-The commands, both runs, and the numbers: xref:try-load.adoc[Try it: a load, with Kafka away].
+The commands, both Kafka runs, and the numbers: xref:try-load.adoc[Try it: a load, with Kafka away]. The same users with PostgreSQL stopped, so far on the modulith: xref:try-database.adoc[Try it: a load, with the database away].
 
