@@ -11,6 +11,7 @@
 ** xref:try-analytics.adoc[Try it: analytics, from either side]
 ** xref:try-load.adoc[Try it: a load, with Kafka away]
 ** xref:try-database.adoc[Try it: a load, with the database away]
+** xref:try-routing-away.adoc[Try it: a load, with routing away]
 ** xref:switching.adoc[Switching sides: what happens]
 
 .Reference
