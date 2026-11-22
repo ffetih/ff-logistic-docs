@@ -1,0 +1,74 @@
+= Try it: a load, with routing away
+:description: Five users on the services side, with the routing service stopped for a minute: the plan falls back, the direct distance call fails, and nothing queues.
+
+On the services side a road leg's distance is an HTTP call to the routing service. The plan asks through transportation's port: 1 s to connect, 2 s to answer, and the straight-line estimate when routing does not answer (xref:services::index.adoc[flow 1]). The scenario's own `distance` request goes through the gateway, which gives a connection 2 s (`proxy_connect_timeout` in the gateway's nginx). The modulith has no routing process to stop. This run is the services side only, on 2026-11-22.
+
+[[run]]
+== How it is started
+
+The services were already answering. Two terminals, both in `runtime`:
+
+[source,bash]
+----
+deploy/load/run.sh 5 4m 30
+----
+
+[source,bash]
+----
+deploy/load/drill.sh routing 60
+----
+
+The drill scales the routing rollout to zero and back to the replica count it had. Argo CD shows `routing` `OutOfSync` while the replicas are zero, and `Synced` again when they return. The load started at 05:32:21Z. The drill started nine seconds later, so the minute without routing sits at the beginning of the measured four.
+
+[[caller]]
+== What the caller saw
+
+[source]
+----
+side: services  vus: 5  warm-up: 30s  measured: 4m
+iterations: 928  (3.87/s)  requests: 6501  (27.1/s)  failed: 1.11%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    56.9    64.9    65.7    65.9
+plan           928    0.0%    21.6  1014.1  1022.0  1036.7
+shipment       928    0.0%     3.2    11.6    17.3    21.4
+pickup         928    0.0%     8.4    20.4    26.7    32.7
+departure      928    0.0%     8.5    17.4    22.4    27.8
+deliver        928    0.0%     9.3    17.5    22.5    62.3
+warehouses     928    0.0%     3.6     7.1     9.7    14.2
+distance       928    7.8%     3.4  2001.3  2003.1  2004.2
+----
+
+Nothing failed except `distance`: 7.8 % of those calls, which is every one of the 1.11 % overall. A failed distance does not stop the iteration, so plan, delivery and the rest were all sent 928 times. The plan's median stayed 21.6 ms. Its p95 is 1.01 s and its slowest is 1.04 s, and every plan returned. That is the connect timeout: routing's pods were gone, transportation waited 1 s, and the core booked the leg on the straight-line estimate. The direct distance call has no estimate behind it. It waited the gateway's 2 s and then failed. The slowest of those is 2.00 s.
+
+The rate is 3.87 iterations a second, against 4.69 when Kafka was stopped and nothing failed. The missing iterations are the plans that waited a second and the distance calls that waited two.
+
+k6's own bar for this scenario is under 1 % failed. This run crossed it. The summary says so, and the file was still written.
+
+[[drill]]
+== What the drill could see
+
+[source]
+----
+  time  routing   delivered  arrivals analytics  outbox
+   +1s  up                5        10        10       0
+   +8s  away             35        40        40       0
+  +62s  away            125       125       125       0
+-- routing back at +62s
+  +63s  back            125       125       125       0
+-- caught up 1s after routing came back
+----
+
+Deliveries kept climbing while routing was away, and arrivals and analytics stayed with them. The outbox was 0 on every line. A booked leg does not need routing again to be picked up and delivered, and the delivery's event does not wait for it. The drill's "caught up" is about those four counts. It cannot see the distance calls that failed. One second after the scale-up the counts were already level, because they had never split.
+
+[[pods]]
+== What the pods cost
+
+At rest, before the drill, seven pods held 47 millicores and 2296 MiB. Under load the highest sample is 2232 millicores and 2330 MiB. Almost all of the CPU is the two routing pods that the drill started when it scaled back, `routing-85b974b5c5-7h5tw` and `thqkk`, at 921 and 916 millicores. Those are new pods. The sample caught them starting, not five users keeping routing that busy. Memory did not move.
+
+[[shown]]
+== What this run shows
+
+* *The plan survives a routing service that is gone.* It waits 1 s and books the straight-line estimate. No plan failed.
+* *The direct distance call does not.* It waits the gateway's 2 s and fails. That is the whole of the 1.11 %.
+* *Nothing queues.* Deliveries, arrivals and analytics stayed together, and the outbox stayed empty. Stopping routing is not stopping the database, and it is not stopping Kafka.
+* *The modulith cannot run this drill.* Routing there is an area inside `logistics-app`, not a process of its own. Startup time is still not in these files.
