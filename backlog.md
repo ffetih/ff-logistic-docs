@@ -57,7 +57,8 @@ The reference cluster `ff-logistics` uses the same host ports: only one of the t
 | S5 Routing and documents | shared, modulith, services | Route planning and e-CMR / e-POD links on both sides |
 | S6 Events out and analytics | shared, modulith, services | Deliveries reach the analytics database from either side; RLS and the monthly rollup |
 | S7 The comparison | docs, runtime | Measured: memory, startup, latency, failures, change cost. The comparison guide. |
-| S8–S13 | shared, runtime | Reporting and Superset, console, partner gateways, tracing, multi-cluster. Built once, against the edge. |
+| S8 Reporting and Superset | shared, runtime | Superset reads one tenant's months. The guest token names the tenant. Dashboards are files. |
+| S9–S13 | shared, runtime | Console, partner gateways, tracing, multi-cluster. Built once, against the edge. |
 
 ---
 
@@ -266,11 +267,31 @@ Goal: numbers instead of opinions.
 - [ ] **S07-06 Ship a sprint with one workflow** · runtime
   The `ship` chain as a workflow in runtime (a release train): started with a branch name, it merges each repository's pull request in the build order and waits for its run. Needs a token that may act on the other repositories. Optional.
 
-## S8–S13 — Built once, against the edge
+## S8 — Reporting and Superset
+
+Goal: Superset shows one tenant's months, and a guest token is what names the tenant. The loader already stored the rows. The reference's reporting module (its S09-01, a second copy of deliveries inside the product) is not ported.
+
+The reader role sees a row only after `SET app.tenant_id`. Superset's own row filter is a `WHERE`, and this policy does not read one. `set_config` is revoked, so a chart cannot set the tenant itself.
+
+- [ ] **S08-01 Run Superset** · runtime
+  The Application, from `deploy/platform/superset`. The host port `8088` is already mapped to `30088`. Its metadata database is created on the same PostgreSQL, and it connects to `ff_logistics_analytics` as `analytics_reader`.
+  Done when: `http://localhost:8088` answers and the pod is Healthy.
+- [ ] **S08-02 Set the reader's tenant from the guest token** · runtime
+  Before a chart's SQL, the connection runs `SET app.tenant_id` for the tenant the guest token names. The chart's statement cannot.
+  Done when: `ff-eu-freight` sees its rows in `tenant_delivery_monthly`, another tenant sees none of them, and a statement that calls `set_config` is refused.
+- [ ] **S08-03 Sign the guest token in identity** · shared
+  A signed-in caller asks identity. The token names that caller's tenant and one dashboard. The signing secret stays in identity and in Superset.
+  Done when: a planner's access token exchanges for a guest token of the planner's tenant, and a body that names another tenant is refused.
+- [ ] **S08-04 Import the monthly dashboard from files** · runtime
+  One dashboard, deliveries per month, loaded when Superset starts. The files live next to the Application. The reference's `infra/local/superset/assets` was never written. The table is `tenant_delivery_monthly`.
+  Done when: a fresh sync has the dashboard, and its figures are that table's for the token's tenant.
+- [ ] **S08-05 Write the first run** · docs
+  Superset up, one tenant's months on the dashboard, the other tenant absent.
+
+## S9–S13 — Built once, against the edge
 
 Outline; each sprint is detailed when it starts. They talk to the edge and the topics, so they do not care which side is active.
 
-- **S8 Reporting and Superset**: tenant-scoped guest tokens, dashboards as code. Port: S9 of the reference plan.
 - **S9 Console**: one origin behind nginx, sign-in through identity, warehouse and shipment pages, routes on a map, embedded dashboards.
 - **S10 Partner gateway: Northfield**: inbox and outbox, OAuth2 and REST in, SOAP status out, one instance per round.
 - **S11 Partner gateway: Corvane**: EDIFACT over SFTP with Camel, CONTRL before acceptance.
