@@ -391,11 +391,19 @@ What exists: Superset, beside the loader, reading `tenant_delivery_monthly` as `
 
 The steps: xref:try-superset.adoc[Try it: one tenant's months].
 
+[[s9]]
+== S9: the console
+
+What exists: one origin on 8090. Sign-in goes to identity. Warehouse, shipment and route pages call the edge. The report page embeds the monthly dashboard with the guest token identity already signs. What it showed, on 2026-11-22: `nexus.planner` signed in, and the frame was `ff-eu-freight`'s November.
+
+The steps: xref:try-console.adoc[Try it: the console].
+
 [[collection]]
 == The same calls, as a collection
 
-The calls on this page, in the order to run them, are also a Postman collection. The host ports and the two users are the HTTP Client environment next to it.
+The calls on this page, in the order to run them, are a Postman collection and an IntelliJ HTTP Client file. The host ports and the two users are the environment file. In IntelliJ, select the `local` environment.
 
 * xref:attachment$ff-logistic.postman_collection.json[ff-logistic.postman_collection.json]
 * xref:attachment$http-client.env.json[http-client.env.json]
+* xref:attachment$ff-logistic.http[ff-logistic.http]
 
