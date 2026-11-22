@@ -391,3 +391,11 @@ What exists: Superset, beside the loader, reading `tenant_delivery_monthly` as `
 
 The steps: xref:try-superset.adoc[Try it: one tenant's months].
 
+[[collection]]
+== The same calls, as a collection
+
+The calls on this page, in the order to run them, are also a Postman collection. The host ports and the two users are the HTTP Client environment next to it.
+
+* xref:attachment$ff-logistic.postman_collection.json[ff-logistic.postman_collection.json]
+* xref:attachment$http-client.env.json[http-client.env.json]
+
