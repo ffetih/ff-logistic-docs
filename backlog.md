@@ -257,7 +257,7 @@ Goal: numbers instead of opinions.
   Both sides, five users, four minutes, recorded in `try-load` (2026-11-21 services, 2026-11-22 modulith). 0% failed on each. Startup not measured.
 - [ ] **S07-03 Run the failure drills on both sides** · docs
   Database away, Kafka away, one area away, a slow area: what the user sees, what is lost, what recovers by itself.
-  Kafka away during that load, both sides. On the services, arrivals and analytics froze and the outbox drained 412 s after the broker came back. On the modulith, arrivals kept up and analytics caught up 231 s after. Nothing lost, and the caller did not see it either time. PostgreSQL away, modulith only (`try-database`): five plans failed at 30 s, everything after a successful plan succeeded, and the first sample that could read the database was already caught up. The services side, and a stopped area, are still open.
+  Kafka away during that load, both sides. On the services, arrivals and analytics froze and the outbox drained 412 s after the broker came back. On the modulith, arrivals kept up and analytics caught up 231 s after. Nothing lost, and the caller did not see it either time. PostgreSQL away, both sides (`try-database`): five plans failed at 30 s on each, everything after a successful plan succeeded, and the first readable sample was already caught up, with an empty outbox. A stopped area is still open.
 - [ ] **S07-04 Count the cost of a change** · docs
   Three real changes (a new field, a new rule in one area, a new flow between areas): files, repositories, pull requests, deployments, on each side.
 - [ ] **S07-05 Write the comparison guide** · docs

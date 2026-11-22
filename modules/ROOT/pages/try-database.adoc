@@ -1,7 +1,7 @@
 = Try it: a load, with the database away
-:description: The modulith under the same five users, with PostgreSQL stopped for half a minute: who waits, what fails, and what is left when it comes back.
+:description: Five users, with PostgreSQL stopped, on the modulith and on the services: who waits, what fails, and what is left when the database comes back.
 
-xref:try-load.adoc[The load with Kafka away] used the same five users. There the caller did not notice, because a delivery answers from the database commit and the event leaves afterwards. This run takes the database away, so the commit itself has nowhere to go. It was done on the modulith, on 2026-11-22, on the pods that had just finished that Kafka run. The services side has not been measured this way yet.
+xref:try-load.adoc[The load with Kafka away] used the same five users. There the caller did not notice, because a delivery answers from the database commit and the event leaves afterwards. This run takes the database away, so the commit itself has nowhere to go. Both sides, on 2026-11-22. The modulith run used the pods that had just finished the Kafka run. The services run followed the switch back.
 
 [[run]]
 == How it is started
@@ -20,8 +20,11 @@ deploy/load/drill.sh postgres 30
 
 The load is the same scenario: plan, read, pick up, depart, deliver, warehouses, distance. The drill scales the `postgres` deployment to zero, waits, and scales it back to one. While the pod is gone the drill cannot count, because its counts are queries. A line then says `the database does not answer`.
 
+[[modulith]]
+== The modulith
+
 [[caller]]
-== What the caller saw
+=== What the caller saw
 
 The load started at 05:03:31Z. The drill started fifteen seconds later, during the warm-up. The measured four minutes include the outage.
 
@@ -45,7 +48,7 @@ Only `plan` failed, five times: 877 plans, and 872 of every later request. An it
 The rate fell from 4.71 iterations a second, on the Kafka run, to 3.65. The missing iterations are that waiting. Five users, each held for about half a minute, is a few hundred iterations over four minutes.
 
 [[blind]]
-== What the drill could see
+=== What the drill could see
 
 [source]
 ----
@@ -64,15 +67,82 @@ The argument was 30 s. The file has one `away` line, at +66 s, and the deploymen
 Caught up, on the first sample that could read. Delivered 7, arrivals 11, analytics 5, outbox 0. The drill allows three in flight, and the four figures are four queries in a row, so arrivals a few ahead of delivered is the load moving between them. The outbox was empty: a plan that failed had committed nothing, and a plan that waited committed, opened its arrival in-process, and had its events taken. Nothing was left unpublished, and nothing had to be replayed.
 
 [[pods]]
-== What the pods cost
+=== What the pods cost
 
 At rest, before this run, the four `logistics-app` pods held 1847 MiB. The Kafka run had left them at 1835 MiB under load, and they had not shrunk. This is not a cold measurement. CPU was 10 millicores.
 
 Under load the highest sample was 639 millicores and 1969 MiB. Lower CPU than the Kafka run's 1044, because the users spent part of the four minutes waiting rather than sending. Kafka's highest sample was 60 millicores. There was no backlog for it to drain.
 
-[[shown]]
-== What this run shows
+[[services]]
+== The services
 
-* *The caller feels a database that is away, and only at the plan.* Five plans failed at 30 s. Every request after a successful plan succeeded, including the delivery. With Kafka away, nothing failed.
-* *There is no queue to catch up.* Kafka left an outbox that drained for minutes. Here the first readable sample was already within the drill's margin, seven seconds after the pod was scaled back.
-* *The drill's 30 s is not the outage.* Its own query blocks while the pod is gone, and the recorded gap was about a minute. The services side has not been run.
+The switch back, then the same two commands. The load started at 05:19:33Z. The drill started eleven seconds later. Argo CD showed `postgres` leave `Synced` while its deployment was at zero replicas, and return to `Synced` and `Healthy` once the drill scaled it back. The new pod is `postgres-986699bff-vhm82`.
+
+=== What the caller saw
+
+[source]
+----
+side: services  vus: 5  warm-up: 30s  measured: 4m
+iterations: 847  (3.53/s)  requests: 5904  (24.6/s)  failed: 0.08%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    49.2    58.3    58.7    58.8
+plan           847    0.6%    23.9    52.4 21192.3 30002.5
+shipment       842    0.0%     6.1    15.3    19.0   463.7
+pickup         842    0.0%    13.8    22.4    29.0    35.1
+departure      842    0.0%    13.2    21.9    26.2   447.7
+deliver        842    0.0%    12.7    21.8    26.7   448.4
+warehouses     842    0.0%     6.2     9.9    14.1  4702.4
+distance       842    0.0%     3.5     6.1     8.5    10.4
+----
+
+The same five plans failed, and the same 30.0 s is the slowest. The p99 is 21.2 s. Median 23.9 ms, against 12.2 on the modulith: `plan` here is the HTTP call to routing as well as the insert. Everything after a successful plan succeeded. A few of those waited and still returned: a delivery took 448 ms at its slowest, one warehouse read took 4.7 s. `distance` stayed under 11 ms. The rate is 3.53 iterations a second, against 4.69 when Kafka was the thing stopped.
+
+=== What the drill could see
+
+[source]
+----
+== drill: postgres away for 30s, services side, from 2026-11-22T05:19:44Z
+  time  postgres  delivered  arrivals analytics  outbox
+   +2s  up                5         9        10       0
+  +67s  away      (the database does not answer)
+-- postgres back at +68s
+  +68s  back      (the database does not answer)
+  +74s  back             14        14        19       0
+-- caught up 6s after postgres came back
+----
+
+The same shape as the modulith. One blind line, the deployment scaled back at +68 s, a readable sample at +74 s, caught up six seconds after the scale-up. Delivered 14, arrivals 14, analytics 19, outbox 0. Analytics was already five ahead on the first line (10 against 5), and it is five ahead on the last (19 against 14): the later query of a pair, not a backlog growing while the database was gone. The outbox is empty on both lines.
+
+Flow 2 does cross Kafka on this side. It did not leave a queue. A delivery that cannot commit writes no outbox row, so there is nothing for the broker to hold. Kafka was up the whole time. When the commit succeeded, the arrival was opened on that hop, inside the six seconds.
+
+=== What the pods cost
+
+Seven pods, started by the switch a few minutes earlier. At rest, 98 millicores and 1926 MiB. Under load, 982 millicores and 2262 MiB. Transportation is 683 of the 982. Kafka's highest sample was 52 millicores: nothing was waiting for it.
+
+[[shown]]
+== What the two runs show
+
+[cols="2,3,3",options="header"]
+|===
+| | Modulith | Services
+
+| Plans that failed
+| 5, at 30.0 s
+| 5, at 30.0 s
+
+| After a successful plan
+| every later request succeeded
+| every later request succeeded
+
+| Rate
+| 3.65 /s
+| 3.53 /s
+
+| Caught up after the scale-up
+| 7 s, outbox 0
+| 6 s, outbox 0
+|===
+
+* *Stopping the database looks the same from both sides.* The caller waits on the plan, five of them give up at 30 s, and the first sample that can read is already within the drill's margin. Kafka being on the path of flow 2 does not add a backlog, because the event is written in the delivery's transaction.
+* *There is no queue, on either side.* The Kafka drills left an outbox that drained for minutes. Here the outbox was empty as soon as the database answered.
+* *The drill's 30 s is not the outage.* On both sides one `kubectl exec` blocked while the pod was gone, and the recorded gap was about a minute. Argo CD shows that minute as `postgres` leaving `Synced` and coming back. Startup time and a stopped area are not in these files.
