@@ -49,9 +49,10 @@ On the two clean runs the rate is the same, 4.69 and 4.71 iterations a second, b
 
 [mermaid]
 ....
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#0f5132'}}}}%%
 xychart-beta
   title "Flow 1 (plan) latency in ms — clean load"
-  x-axis ["Modulith median", "Services median", "Modulith p95", "Services p95"]
+  x-axis ["Modulith med", "Services med", "Modulith p95", "Services p95"]
   y-axis "Milliseconds" 0 --> 50
   bar [12.7, 20.1, 30.1, 44.5]
 ....
@@ -75,11 +76,12 @@ The full k6 breakdown across 1,130 modulith iterations (7,915 requests) and 1,12
 
 [mermaid]
 ....
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#0f5132, #ea580c'}}}}%%
 xychart-beta
-  title "Median latency per endpoint (ms) — line 1: Modulith, line 2: Services"
-  x-axis ["plan", "pickup", "departure", "deliver", "shipment", "warehouses", "distance"]
+  title "Median latency per endpoint (ms) — Green bar: Modulith · Orange line: Services"
+  x-axis ["plan", "pickup", "depart", "deliver", "shipment", "wms", "distance"]
   y-axis "Milliseconds" 0 --> 22
-  line [12.7, 11.1, 11.4, 12.2, 3.9, 3.6, 1.8]
+  bar [12.7, 11.1, 11.4, 12.2, 3.9, 3.6, 1.8]
   line [20.1, 11.9, 10.2, 9.7, 3.8, 4.0, 2.3]
 ....
 
@@ -95,9 +97,10 @@ With routing stopped, no plan failed. The median stayed 21.6 ms. The p95 is 1.01
 
 [mermaid]
 ....
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#ea580c'}}}}%%
 xychart-beta
   title "Services p95 latency (ms) — clean load vs 60 s routing outage"
-  x-axis ["plan clean", "plan routing away", "distance clean", "distance routing away"]
+  x-axis ["plan (clean)", "plan (away)", "distance (clean)", "distance (away)"]
   y-axis "Milliseconds" 0 --> 2200
   bar [44.5, 1014.1, 4.1, 2001.3]
 ....
@@ -128,9 +131,10 @@ Memory is paid at rest. Four `logistics-app` pods held 1449 MiB with nobody call
 
 [mermaid]
 ....
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#0f5132'}}}}%%
 xychart-beta
   title "Memory footprint in MiB — 4 modulith pods vs 7 service pods"
-  x-axis ["Modulith at rest", "Services at rest", "Modulith under load", "Services under load"]
+  x-axis ["Modulith rest", "Services rest", "Modulith load", "Services load"]
   y-axis "MiB" 0 --> 2800
   bar [1449, 2413, 1835, 2483]
 ....
@@ -141,11 +145,12 @@ The platform is shared. On the clean runs Kafka used 584 millicores while the se
 
 [mermaid]
 ....
-xychart-beta
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#0f5132'}}}}%%
+xychart-beta horizontal
   title "Peak CPU under clean load by component (millicores)"
-  x-axis ["logistics-app (4)", "transportation (2)", "warehousing (2)", "routing (2)", "gateway (1)", "kafka (mod)", "kafka (svc)", "postgres", "identity"]
+  x-axis ["logistics-app (4)", "kafka (mod)", "kafka (svc)", "transportation (2)", "warehousing (2)", "postgres", "routing (2)", "gateway (1)", "identity"]
   y-axis "Millicores" 0 --> 1150
-  bar [1044, 379, 113, 85, 21, 832, 584, 86, 6]
+  bar [1044, 832, 584, 379, 113, 86, 85, 21, 6]
 ....
 
 On the services side, `transportation` accounts for *63%* of application CPU (`379` of `598` millicores) and `932 MiB` across its two pods, while `gateway` uses only `21` millicores and `19 MiB`. Local JWKS verification keeps `identity` nearly idle (`5–6` millicores) under continuous authenticated load.
@@ -184,8 +189,9 @@ Flow 2 is where a minute without Kafka is felt. On the services the arrival is a
 
 [mermaid]
 ....
+%%{init: {'themeVariables': {'xyChart': {'plotColorPalette': '#0f5132, #ea580c'}}}}%%
 xychart-beta
-  title "60 s Kafka outage — outbox backlog & drain curve (line 1: Modulith, line 2: Services)"
+  title "60 s Kafka outage — outbox backlog (Green: Modulith · Orange: Services)"
   x-axis ["0s", "30s", "60s", "80s", "120s", "150s", "180s", "210s", "240s", "270s", "300s", "360s", "420s", "480s"]
   y-axis "Unfinished outbox rows" 0 --> 1200
   line [0, 431, 834, 700, 650, 550, 450, 350, 200, 50, 0, 0, 0, 0]
