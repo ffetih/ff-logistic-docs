@@ -387,7 +387,7 @@ The commands, both Kafka runs, and the numbers: xref:try-load.adoc[Try it: a loa
 [[s8]]
 == S8: one tenant's months
 
-What exists: Superset, beside the loader, reading `tenant_delivery_monthly` as `analytics_reader`. Identity signs a guest token for the caller's tenant and one dashboard. The dashboard is files next to the Application, imported when Superset starts. What it shows, on 2026-11-22: `ff-eu-freight`'s November, 7409 shipments, and `ff-tr-distribution` seeing none of that row.
+What exists: Superset, beside the loader, reading `tenant_delivery_monthly` as `analytics_reader`. Identity signs a guest token for the caller's tenant and one dashboard. The dashboard is files next to the Application, imported when Superset starts. What it shows, on 2026-11-22: `ff-eu-freight`'s November, 7409 shipments, and `ff-tr-distribution` seeing none of that row. After `a4f28d6` the same dashboard also shows that month's kilometres and CO2e saved: 88067.350 km and 7772.400 kg, with the shipments bar at 7412.
 
 The steps: xref:try-superset.adoc[Try it: one tenant's months].
 

@@ -119,3 +119,43 @@ HTTP 403
 ----
 
 `set_config` stays refused for this role (xref:try-analytics.adoc#reader[step 3 of the analytics page]). The chart does not set the tenant. The connection does, from the token, before the statement runs.
+
+[[distance]]
+== 4. Distance and CO2e on the same dashboard
+
+The sync of `a4f28d6` adds two bars to this dashboard: `Distance per month` and `CO2e saved per month`. They read `total_distance_km` and `saved_co2e_kg`, columns the monthly table already had. Init imported 6 files. The embedded id stayed `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. This import stored distance as slice 3 and CO2e as slice 2.
+
+The same guest token, later the same day. More shipments had been delivered, so the shipments bar now reads 7412. The first-run 7409 above is the earlier count.
+
+[source,bash]
+----
+DISTANCE='{"datasource":{"id":1,"type":"table"},"force":true,"queries":[{"columns":[{"columnType":"BASE_AXIS","sqlExpression":"delivery_month","label":"delivery_month","expressionType":"SQL","timeGrain":"P1M"}],"metrics":["total_distance_km"],"orderby":[["total_distance_km",false]],"row_limit":100}],"result_format":"json","result_type":"full","form_data":{"slice_id":3,"dashboardId":1,"viz_type":"echarts_timeseries_bar"}}'
+CO2E='{"datasource":{"id":1,"type":"table"},"force":true,"queries":[{"columns":[{"columnType":"BASE_AXIS","sqlExpression":"delivery_month","label":"delivery_month","expressionType":"SQL","timeGrain":"P1M"}],"metrics":["saved_co2e_kg"],"orderby":[["saved_co2e_kg",false]],"row_limit":100}],"result_format":"json","result_type":"full","form_data":{"slice_id":2,"dashboardId":1,"viz_type":"echarts_timeseries_bar"}}'
+echo "distance"
+curl -s -H "X-GuestToken: $(echo "$EU" | jq -r .token)" -H 'Content-Type: application/json' \
+  localhost:8088/api/v1/chart/data -d "$DISTANCE" | jq '.result[0].data'
+echo "co2e"
+curl -s -H "X-GuestToken: $(echo "$EU" | jq -r .token)" -H 'Content-Type: application/json' \
+  localhost:8088/api/v1/chart/data -d "$CO2E" | jq '.result[0].data'
+----
+
+✅ `ff-eu-freight`, November 2026:
+
+----
+distance
+[
+  {
+    "delivery_month": 1793491200000.0,
+    "total_distance_km": 88067.350
+  }
+]
+co2e
+[
+  {
+    "delivery_month": 1793491200000.0,
+    "saved_co2e_kg": 7772.400
+  }
+]
+----
+
+The console's report page embeds this dashboard, so the same frame shows the three bars.

@@ -37,7 +37,7 @@ The same user opens Depo, Sevkiyat, Rota and Rapor: the token carries `WAREHOUSE
 
 Rapor, then *Gömülü BI panosu*. The page posts `/identity/api/v1/guest-tokens` with dashboard id `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. The iframe is `http://localhost:8088/embedded/<that id>`. Superset checks the console's origin. `dc56530` sets that list to `http://localhost:8090` and `http://localhost:5173`.
 
-✅ The frame title was `Deliveries per month (ff-eu-freight)`. The bar is November 2026, the 7409 from xref:try-superset.adoc#chart[step 3 of the Superset page].
+✅ The frame title was `Deliveries per month (ff-eu-freight)`. The bar is November 2026, the 7409 from xref:try-superset.adoc#chart[step 3 of the Superset page]. After `a4f28d6` the same dashboard also has the distance and CO2e bars (xref:try-superset.adoc#distance[step 4]).
 
 image::console/report.png[Console report page embedding the Superset monthly deliveries chart for ff-eu-freight]
 
