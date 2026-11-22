@@ -1,0 +1,114 @@
+= Try it: monthly PDF reports and notifications
+:description: S13 as numbered steps: one shared/reporting process with generation and delivery modules, in-process HTML-to-PDF from tenant_delivery_monthly, RustFS Claim Check, Kafka report-ready, and Mailpit delivery.
+
+S13 adds tenant-scoped monthly PDF reports and notification delivery in **`shared/reporting`**, outside the modulith/services switch. Whichever implementation is active behind the edge (`:8081`), reporting reads the same `tenant_delivery_monthly` rollup from `ff_logistics_analytics` as `analytics_reader` with `SET LOCAL app.tenant_id`.
+
+== How one process keeps the event hop real
+
+To fit comfortably on a single-node k3d cluster where Apache Superset already uses ~1.5 GiB, `shared/reporting` runs as **one JVM process** (`256 MiB` request / `512 MiB` limit) divided into two Spring Modulith modules verified by `ModularityTest`:
+
+[mermaid]
+....
+flowchart LR
+  UI["Console :8090\n/reporting/ -> reporting:8089"] --> GEN["generation module\n(schema: generation)"]
+  GEN -->|"SET LOCAL app.tenant_id\n(analytics_reader)"| ANA[("ff_logistics_analytics\ntenant_delivery_monthly")]
+  GEN -->|"OpenHTMLToPDF\n(PDFBox, in-process)"| RF["RustFS :9000\nClaim Check PDF"]
+  GEN -->|"outbox (schema: reporting)"| KF["Kafka\nff.logistics.reporting.report-ready"]
+  KF -->|"group: reporting-delivery\n(+ .dlt)"| DEL["delivery module\n(schema: delivery)"]
+  DEL -->|SMTP :1025| MP["Mailpit\nUI :8092"]
+  DEL -->|HTTP POST| WH["Tenant Webhook"]
+  GEN -. OTLP .-> JG["Jaeger :16686"]
+  DEL -. OTLP .-> JG
+....
+
+* **No new carbon formula**: figures are read directly from `tenant_delivery_monthly` (`delivered_shipments`, `total_distance_km`, `saved_co2e_kg`) under PostgreSQL `FORCE RLS`.
+* **In-process HTML → PDF**: rendered via `openhtmltopdf-pdfbox:1.1.114` — no headless Chromium, BIRT, or Jasper in the cluster.
+* **Claim Check + idempotency**: the PDF bytes stay in RustFS (`<tenant>/report/<yyyy-MM>/monthly.pdf`); Kafka carries only the metadata and object key (`ff.logistics.reporting.report-ready`). A calendar month is built once per tenant (`201 Created`); subsequent calls return the stored report (`200 OK`) with a fresh 15-minute presigned download link without re-sending notifications.
+* **Per-channel idempotency**: `delivery.sent_delivery(report_id, channel)` ensures that if email succeeds and a webhook fails and retries, the email is never sent twice. After two retries (`DELIVERY_RETRY_ATTEMPTS=2`, `PT1S`), failed deliveries move to `ff.logistics.reporting.report-ready.reporting-delivery.dlt`.
+
+=== Generation, Claim Check, and delivery sequence
+
+[plantuml,reporting-sequence,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+actor Planner
+participant "Console nginx\n:8090 /reporting" as ng
+box "shared/reporting (one JVM)" #f8fafc
+  participant "generation\nmodule" as gen
+  participant "delivery\nmodule" as del
+end box
+database "ff_logistics_analytics\n(analytics_reader)" as ana
+participant "RustFS\n:9000" as s3
+database "ff_reporting\n(generation + reporting\n+ delivery schemas)" as rdb
+queue "Kafka\nreport-ready" as kf
+participant "Mailpit / Webhook\n(SMTP :1025)" as mp
+
+Planner -> ng : POST /reporting/api/v1/reports/monthly\n{"month": "2026-11"} + traceparent
+ng -> gen : strip /reporting prefix
+gen -> ana : BEGIN; SET LOCAL app.tenant_id = 'ff-eu-freight';\nSELECT * FROM tenant_delivery_monthly
+ana --> gen : 7412 shipments, 88067.350 km, 7772.400 kg
+gen -> gen : OpenHTMLToPDF (PDFBox) in-process
+gen -> s3 : PUT ff-eu-freight/report/2026-11/monthly.pdf
+gen -> rdb : INSERT generation.report +\nreporting.event_publication (1 tx)
+gen --> Planner : 201 Created + 15-min presigned downloadUrl
+rdb -> kf : outbox externalizer (+ traceparent)
+kf -> del : group reporting-delivery
+del -> rdb : check delivery.sent_delivery(report_id, channel)
+del -> mp : SMTP mail + optional HTTP webhook
+del -> rdb : INSERT delivery.sent_delivery
+note right of del : On persistent failure:\n2 retries (PT1S) → .reporting-delivery.dlt
+@enduml
+....
+
+The screenshots and figures below are from the first live run on 2026-11-22 (`shared` `4d42333`, `runtime` `57891fb`, `ff-eu-freight`, November 2026).
+
+[[console]]
+== 1. Configure channels and generate the monthly PDF
+
+Open `http://localhost:8090` as `nexus.planner` (`ff-eu-freight`) and go to **Rapor**. Because the console's `nginx.conf` proxies `/api` to `edge:8081`, reporting calls travel through `/reporting/` → `reporting:8089` (the same pattern as `/identity/`).
+
+. In **Teslimat kanalları**, enable **E-posta** (`planner@ff-eu-freight.test`) and click *Kanalları kaydet* (`PUT /reporting/api/v1/reports/channels`).
+. Under **Aylık PDF**, select `Kasım 2026` (`2026-11`) and click *PDF üret* (`POST /reporting/api/v1/reports/monthly`).
+
+✅ The console confirms `2026-11 raporu hazır`, prints the exact `tenant_delivery_monthly` figures (**7,412** deliveries, **88,067.4 km**, **7,772.4 kg** CO₂e saved), links to Mailpit (`http://localhost:8092`), and exposes the trace ID (`İz: 021be3e6`) in the top bar:
+
+image::reporting/console-report.png[Console Rapor page showing generated 2026-11 monthly report figures (7412 shipments, 88067.4 km, 7772.4 kg CO2e saved), Mailpit link, delivery channel preferences, and trace badge 021be3e6]
+
+[[pdf]]
+== 2. Download the rendered PDF from RustFS
+
+Clicking the *PDF* button (or calling `GET /reporting/api/v1/reports/\{id}` followed by `GET <downloadUrl>`) downloads `monthly.pdf` directly from RustFS (`http://localhost:9000`) using a 15-minute SigV4 presigned URL:
+
+image::reporting/monthly-pdf.png[Rendered monthly.pdf opened in the browser showing Tenant ff-eu-freight, Month 2026-11, Delivered shipments 7412, Distance km 88067.350, and CO2e saved kg 7772.400]
+
+Every figure matches the embedded Superset charts on xref:try-superset.adoc#distance[the Superset page] to three decimal places (`88067.350 km`, `7772.400 kg`).
+
+[[mailpit]]
+== 3. Verify SMTP delivery in Mailpit
+
+Open Mailpit at `http://localhost:8092` (NodePort `30092`; SMTP stays cluster-internal on `mailpit:1025`).
+
+✅ The message from `<reports@ff-logistics.local>` to `<planner@ff-eu-freight.test>` (`Subject: Monthly report 2026-11`) carries the monthly summary and the RustFS Claim Check object key (`ff-eu-freight/report/2026-11/monthly.pdf`):
+
+image::reporting/mailpit-message.png[Mailpit UI showing delivered email Monthly report 2026-11 from reports@ff-logistics.local to planner@ff-eu-freight.test with exact delivery figures and RustFS object key]
+
+[[kafka]]
+== 4. Inspect the Kafka topic, DLT, and consumer group
+
+Connecting to the broker's external listener (`localhost:9094`) confirms that `reporting` declared both `ff.logistics.reporting.report-ready` and its dead-letter topic `ff.logistics.reporting.report-ready.reporting-delivery.dlt`, and that consumer group `reporting-delivery` drained the message with **Lag 0**:
+
+image::reporting/kafka-reporting.png[Kafka broker view showing ff.logistics.reporting.report-ready, its .reporting-delivery.dlt dead-letter topic, and consumer group reporting-delivery at Lag 0]
+
+[[jaeger]]
+== 5. Confirm reporting traces in Jaeger
+
+Open Jaeger at `http://localhost:16686`. `reporting` exports OTLP/HTTP spans to `jaeger:4318` just like every other Java service (`ff-base-app`), joining HTTP generation, outbox upkeep, and Kafka consumer spans in one UI:
+
+image::reporting/jaeger-reporting.png[Jaeger UI showing reporting in the live Service dropdown alongside logistics-app, identity-service and analytics-loader with active traces]
+
+[[api-checks]]
+== 6. Run the same flow via Postman or IntelliJ HTTP Client
+
+Section 8 of the xref:walkthrough.adoc#collection[Postman and IntelliJ HTTP collections] replays every S13 call end to end—including a negative tenant-isolation check (`GET /reporting/api/v1/reports/\{id}` with `ff-tr-distribution`'s token returns `404 Not Found`) and a live check against Mailpit's REST API (`GET http://localhost:8092/api/v1/messages`).

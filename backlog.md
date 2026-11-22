@@ -355,26 +355,31 @@ Architecture constraints for this sprint:
 
 - **One JVM process, two Spring Modulith modules**: `shared/reporting` holds `generation` and `delivery`. A second JVM would only buy a second service name on a single k3d node where Superset already takes ~1.5 GiB. One database (`ff_reporting`), two module schemas (`generation`, `delivery`).
 - **Eventing and tracing stay real**: `generation` writes the PDF to RustFS (Claim Check) and publishes `ff.logistics.reporting.report-ready` to Kafka via its outbox; `delivery` consumes it from Kafka in the same process. Jaeger shows both the producer and consumer spans in one trace.
-- **In-process HTML→PDF, no new formulas**: PDFs render in-process from HTML templates (OpenPDF-backed HTML→PDF such as Flying Saucer, or OpenHTMLToPDF — no Chromium, BIRT, or Jasper in this cluster). Figures come directly from `tenant_delivery_monthly` via `analytics_reader` with `SET LOCAL app.tenant_id`; no new carbon formula is written.
-- **Practical routing & port notes**: the console's `nginx.conf` routes `/api` to `edge:8081`, so reporting calls use their own prefix (like `/identity`, e.g. `/reporting` → `reporting`) without touching the edge. Mailpit has no published host port in k3d yet; adding `8092 -> 30092` in `k3d-config.yaml` is a new port and restarts the k3d load balancer (`kubectl port-forward` avoids the restart).
+- **In-process HTML→PDF, no new formulas**: PDFs render in-process from HTML templates (`io.github.openhtmltopdf:openhtmltopdf-pdfbox:1.1.114` — no Chromium, BIRT, or Jasper in this cluster). Figures come directly from `tenant_delivery_monthly` via `analytics_reader` with `SET LOCAL app.tenant_id`; no new carbon formula is written.
+- **Practical routing & port notes**: the console's `nginx.conf` routes `/api` to `edge:8081`, so reporting calls use their own prefix (`/reporting` → `reporting:8089`, like `/identity`) without touching the edge. Mailpit's UI is published on `8092 -> 30092` in `k3d-config.yaml` (adding the port restarts the k3d load balancer).
 
-- [ ] **S13-01 Run Mailpit** · runtime
-  Single-pod Mailpit (`axllent/mailpit`) in `deploy/platform/mailpit`: SMTP on `mailpit:1025`, web UI on NodePort `30092`. Add `8092 -> 30092` to `k3d-config.yaml` (new host port; requires restarting the k3d load balancer, or `kubectl port-forward` in the meantime).
+- [x] **S13-01 Run Mailpit** · runtime
+  Single-pod Mailpit (`axllent/mailpit:v1.34.0`) in `deploy/platform/mailpit`: SMTP on `mailpit:1025`, web UI on NodePort `30092`, host port `8092` in `k3d-config.yaml`.
   Done when: Mailpit is Healthy in Argo CD, accepts SMTP on `mailpit:1025`, and shows received messages in its UI.
-- [ ] **S13-02 Add the `report-ready` contract and `shared/reporting` (`generation` module)** · shared
-  Add `ff.logistics.reporting.report-ready` (topic and example payload) to `ff-contracts`. Create `shared/reporting` as one Spring Boot / Spring Modulith app backed by `ff_reporting` (schemas `generation` and `delivery`). The `generation` module reads `tenant_delivery_monthly` from `ff_logistics_analytics` as `analytics_reader` with `SET LOCAL app.tenant_id`, renders HTML→PDF in-process (no Chromium, BIRT, or Jasper), stores the PDF in RustFS via `ff-base-storage`, serves `POST /api/v1/reports/monthly`, `GET /api/v1/reports` and presigned download links, and publishes `report-ready` through `ff-base-events` outbox to Kafka.
+  Merged in `runtime` (`71cfa63` / PR #26); `http://localhost:8092` received `Monthly report 2026-11` on 2026-11-22.
+- [x] **S13-02 Add the `report-ready` contract and `shared/reporting` (`generation` module)** · shared
+  Add `ff.logistics.reporting.report-ready` (topic and example payload) to `ff-contracts`. Create `shared/reporting` as one Spring Boot / Spring Modulith app backed by `ff_reporting` (schemas `generation`, `delivery`, outbox `reporting`). The `generation` module reads `tenant_delivery_monthly` from `ff_logistics_analytics` as `analytics_reader` with `SET LOCAL app.tenant_id`, renders HTML→PDF in-process (`openhtmltopdf-pdfbox:1.1.114`), stores the PDF in RustFS via `ff-base-storage`, serves `POST /api/v1/reports/monthly`, `GET /api/v1/reports` and `GET /api/v1/reports/{id}`, and publishes `report-ready` through `ff-base-events` outbox to Kafka.
   Done when: `ModularityTest` verifies `generation` and `delivery` boundaries, the contract test passes, a PDF downloads with `tenant_delivery_monthly` numbers, and another tenant cannot read it.
-- [ ] **S13-03 Add the `delivery` module (SMTP and Webhook channels)** · shared
-  In the same `shared/reporting` process (schema `delivery`): Kafka consumer on `ff.logistics.reporting.report-ready` (group `reporting-delivery`, DLT `….reporting-delivery.dlt`), idempotent per `(reportId, channel)`. Tenant channel preferences (`GET/PUT /api/v1/reports/channels`) for email via Mailpit SMTP (`mailpit:1025`) and HTTP webhook with retry and DLT. OpenTelemetry propagates `traceparent` through Kafka so producer and consumer spans join in one trace.
-  Done when: generating a monthly report delivers an email to Mailpit and posts to a webhook, a failing delivery retries and lands on the DLT, and Jaeger shows both producer and consumer spans under one trace.
-- [ ] **S13-04 Deploy `reporting` and publish its image** · shared, runtime
-  Values in `shared/deploy/apps/reporting` (service chart, `ff_reporting` database Job, `TRACING_OTLP_ENDPOINT`, analytics reader / RustFS / Kafka / Mailpit settings), CI build and GHCR publish in `shared`, and the multi-source `reporting` Application in `runtime`.
+  Merged in `shared` (`3c12078` / PR #20, `SET LOCAL` fix `b5ef30a` / PR #25); `monthly.pdf` rendered `7412` shipments, `88067.350 km`, `7772.400 kg` CO2e saved (2026-11-22).
+- [x] **S13-03 Add the `delivery` module (SMTP and Webhook channels)** · shared
+  In the same `shared/reporting` process (schema `delivery`): Kafka consumer on `ff.logistics.reporting.report-ready` (group `reporting-delivery`, DLT `….reporting-delivery.dlt`), idempotent per `(reportId, channel)` via `delivery.sent_delivery`. Tenant channel preferences (`GET/PUT /api/v1/reports/channels`) for email via Mailpit SMTP (`mailpit:1025`) and HTTP webhook with retry (`PT1S`, 2 retries) and DLT. Mail/Kafka/webhook beans carry `@Profile("!migrate")` so the PreSync migration Job runs cleanly.
+  Done when: generating a monthly report delivers an email to Mailpit and posts to a webhook, a failing delivery retries and lands on the DLT, and consumer group `reporting-delivery` drains with Lag 0.
+  Merged in `shared` (`f7f9c71` / PR #22, migrate fix `225fa48` / PR #23); email delivered to `planner@ff-eu-freight.test` in Mailpit and `reporting-delivery` at Lag 0 (2026-11-22).
+- [x] **S13-04 Deploy `reporting` and publish its image** · shared, runtime
+  Values in `shared/deploy/apps/reporting` (service chart, `ff_reporting` database Job, `256Mi/512Mi`, `TRACING_OTLP_ENDPOINT`, analytics reader / RustFS / Kafka / Mailpit settings), CI build and GHCR publish in `shared`, and the multi-source `reporting` Application in `runtime`.
   Done when: `reporting` is Healthy and Synced in Argo CD and runs identically whichever implementation is active behind `edge`.
-- [ ] **S13-05 Wire reporting into the console** · shared
-  Proxy `/reporting` in the console's `nginx.conf` to `reporting` (separate from `/api` → `edge:8081`, like `/identity`). Add monthly PDF generation, report history/download and delivery channel settings to the console report page, and add `reporting` to the admin Jaeger service list.
+  Merged in `shared` (`eb06cdc` / PR #21, image `4d42333`) and `runtime` (`e6efb22` / PR #27); live traces visible under `reporting` in Jaeger (2026-11-22).
+- [x] **S13-05 Wire reporting into the console** · shared
+  Proxy `/reporting/` in the console's `nginx.conf` to `reporting:8089` (separate from `/api` → `edge:8081`, like `/identity`). Add monthly PDF generation, download and delivery channel settings to the console report page, and add `reporting` to the admin Jaeger service list.
   Done when: a signed-in planner generates and downloads a monthly PDF on `http://localhost:8090`, sees the email in Mailpit, and opens the trace in Jaeger.
-- [ ] **S13-06 Write the first run** · docs
-  `try-reporting.adoc`: monthly PDF generation, RustFS download, Mailpit delivery, producer + consumer spans in Jaeger, and verification across a switch.
+  Merged in `shared` (`3d6499a` / PR #24); verified end to end as `nexus.planner` (`ff-eu-freight`, trace `021be3e6`, 2026-11-22).
+- [x] **S13-06 Write the first run, API collections and role-based guides** · docs
+  `try-reporting.adoc` (live Console, PDF, Mailpit, Kafka and Jaeger screenshots), S13 endpoints added to Postman & IntelliJ `.http` collections, plus Architect/BA/Developer/DevOps/End-User tabs (`index.adoc`), `domain.adoc` and `local-dev.adoc` (with IntelliJ Maven & PostgreSQL screenshots).
 
 ## S14 — Multi-cluster, Workflows and Events
 

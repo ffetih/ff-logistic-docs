@@ -1,0 +1,340 @@
+= Business Flows & Domain Rules
+:description: Business Analyst and Product guide to FF Logistic: end-to-end freight forwarding flows, domain lifecycles, GS1 and EN 16258 / ISO 14083 rules, and tenant role permissions.
+
+This guide is written for **Business Analysts, Product Owners, and domain reviewers**. Every business rule, status transition, and permission below is implemented once inside the shared domain cores (`shared/domain/*`) and `shared/reporting`—so it behaves identically whether the cluster runs the modular monolith or microservices.
+
+Each business rule carries a stable ID (e.g. `BR-TMS-04`) so requirements, test cases, and change requests stay traceable.
+
+== System context
+
+Who interacts with FF Logistic, what each role owns, and where the platform boundary sits:
+
+[plantuml,system-context,svg]
+....
+@startuml
+left to right direction
+skinparam shadowing false
+skinparam roundCorner 10
+skinparam rectangle {
+  BackgroundColor #f8fafc
+  BorderColor #0f241d
+}
+skinparam actor {
+  BackgroundColor #ecfdf5
+  BorderColor #14532d
+}
+
+actor "Warehouse operator" as wo
+actor "Logistics planner" as lp
+actor "Dispatcher" as di
+actor "Report viewer" as rv
+actor "Tenant admin" as ta
+actor "Platform operator" as po
+
+rectangle "FF Logistic Platform (single origin :8090)" {
+  rectangle "Identity facade\n(:8085 / Keycloak)" as id
+  rectangle "Warehousing\n(WMS)" as wms
+  rectangle "Transportation\n(TMS)" as tms
+  rectangle "Routing\n(GEO / Timefold)" as geo
+  rectangle "Reporting\n(generation + delivery)" as rep
+  rectangle "Document storage\n(RustFS S3)" as doc
+}
+
+rectangle "Embedded BI\n(Superset :8088)" as bi
+rectangle "Mail & Webhooks\n(Mailpit :8092)" as mail
+rectangle "Distributed Traces\n(Jaeger :16686)" as jg
+
+wo --> wms
+lp --> tms
+di --> geo
+rv --> rep
+lp --> rep : monthly PDF & channels
+ta --> id : users & integration clients
+po --> id : tenants & realm
+wms --> doc : write-once docs
+tms --> doc : e-CMR
+geo --> doc : e-POD
+rep --> doc : monthly PDF (Claim Check)
+tms ..> bi : Kafka → analytics-loader\n(FORCE RLS)
+rep ..> mail : Kafka report-ready →\nSMTP / Webhook
+tms ..> jg : OTLP traces
+rep ..> jg : OTLP traces
+@enduml
+....
+
+== End-to-end freight forwarding lifecycle
+
+A shipment crosses four business areas—**Standards**, **Warehousing (WMS)**, **Transportation (TMS)**, and **Routing (GEO)**—and feeds **Analytics, BI & Monthly Reporting**:
+
+[mermaid]
+....
+flowchart LR
+  ASN["1. ASN announced\n(EXPECTED)"] --> REC["2. Goods received\n& palletized (SSCC)"]
+  REC --> SHP["3. Shipment planned\n(multimodal legs + CO2e)"]
+  SHP -->|Flow 1: road distance| GEO["Routing distance\n(OSRM / haversine)"]
+  SHP --> RTE["4. Delivery route\nplanned (Timefold)"]
+  RTE --> STOP["5. Route stop completed\n+ e-POD uploaded"]
+  STOP -->|Flow 3: RouteStopCompleted| DEL["6. Shipment DELIVERED\n+ e-CMR"]
+  DEL -->|Flow 2: ShipmentDelivered| ARR["7. Warehouse inbound\narrival opened (OPEN)"]
+  DEL -->|Kafka| ANA["8. Analytics RLS rollup\nSuperset + S13 PDF & Mailpit"]
+....
+
+.Cross-area business flows
+[cols="1,2,3",options="header"]
+|===
+| Flow | Trigger | Business effect
+
+| *Flow 1* | Booking a road leg by origin/destination coordinates | Transportation queries Routing (`DistanceLookup`) for road distance; falls back to straight-line estimate (haversine × 1.24) if Routing is unavailable and records the source (`ROUTING` vs `ESTIMATE`) on the leg.
+| *Flow 2* | A shipment moves to `DELIVERED` with a destination warehouse GLN | Warehousing idempotently opens an `OPEN` inbound arrival at the receiving dock (`ShipmentDelivered`). No manual re-entry is required.
+| *Flow 3* | A driver completes a route stop linked to a shipment code | Routing publishes `RouteStopCompleted`; Transportation transitions that shipment to `DELIVERED`, which automatically triggers Flow 2 and Analytics ingestion.
+| *Reporting (S13)* | Planner generates a monthly PDF report (`yyyy-MM`) | Reads `tenant_delivery_monthly` under PostgreSQL RLS, renders the PDF once per tenant/month into RustFS, and notifies configured tenant channels (Email / Webhook) via Kafka `report-ready`.
+|===
+
+== Domain state machines
+
+=== Warehousing: ASN & Inbound Arrival
+
+* **ASN (`AsnStatus`)**: `EXPECTED` → `RECEIVING` → `RECEIVED`
+  ** `EXPECTED`: announced by the supplier; nothing received yet.
+  ** `RECEIVING`: at least one pallet has been built and placed in a bin; remaining lines are still open.
+  ** `RECEIVED`: every line has received its announced quantity; additional receiving against the ASN is refused.
+* **Inbound Arrival (`ArrivalStatus`)**: `OPEN` — opened automatically by Flow 2 when a shipment carrying a warehouse GLN reaches `DELIVERED`.
+
+=== Transportation: Shipment
+
+* **Shipment (`ShipmentStatus`)**: `PLANNED` → `PICKED_UP` → `DEPARTED` → `DELIVERED`
+  ** Strictly forward-only: intermediate steps may be skipped (for example, a carrier reports departure directly without a separate pickup), never repeated and never moved backwards.
+  ** `DELIVERED` is terminal and records the consignee acknowledgement (`receivedBy`).
+
+=== Routing: Route Stop
+
+* **Stop (`StopStatus`)**: `PLANNED` → `COMPLETED`
+  ** Completing a stop records delivery handoff (`receivedBy`) and—when linked to a shipment—triggers Flow 3.
+
+== Intermodal shipment & automated arrival process
+
+The activity diagram traces the core multi-area business flow from booking through CO₂e calculation, delivery confirmation, automatic warehouse arrival (Flow 2), and analytics/reporting:
+
+[plantuml,shipment-process,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam activity {
+  BackgroundColor #f8fafc
+  BorderColor #0f241d
+  DiamondBackgroundColor #ecfdf5
+  DiamondBorderColor #14532d
+}
+start
+:Planner enters ISO 6346 container, pallet SSCC,
+Incoterm, origin/destination, weight, and legs;
+if (Container code valid? BR-TMS-01) then (no)
+  :Reject with 400 Problem Detail;
+  stop
+endif
+if (Pallet SSCC valid? BR-TMS-02) then (no)
+  :Reject with 400 Problem Detail;
+  stop
+endif
+if (Road leg given by coordinates?) then (yes)
+  :Flow 1: query Routing for road distance
+  (fallback: haversine × 1.24);
+endif
+:Assign sequence-backed shipment number (BR-TMS-03)
+and compute EN 16258 / ISO 14083 CO2e savings (BR-TMS-04);
+:Store shipment as PLANNED;
+:Confirm pickup (PICKED_UP) and departure (DEPARTED)
+— steps are forward-only (BR-TMS-05);
+:Confirm delivery with consignee receivedBy
+(directly or via Flow 3 route stop completion);
+:Status becomes DELIVERED (terminal);
+fork
+  :Flow 2: open InboundArrival (OPEN)
+  at destination warehouse GLN;
+fork again
+  :Kafka ShipmentDelivered → analytics-loader
+  → tenant_delivery_monthly (RLS);
+  :Superset BI charts & S13 monthly PDF
+  read updated figures;
+end fork
+stop
+@enduml
+....
+
+== Domain model
+
+The primary business entities across the four domain areas and reporting. Every record is strictly scoped to a single tenant (`tenant_id`):
+
+[plantuml,domain-model,svg]
+....
+@startuml
+hide methods
+hide circle
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam class {
+  BackgroundColor #f8fafc
+  BorderColor #0f241d
+  HeaderBackgroundColor #ecfdf5
+}
+
+class Warehouse {
+  code, name
+  GLN (13-digit GS1)
+  gs1CompanyPrefix
+  country, city, coordinates
+  palletCapacity
+}
+class BinLocation {
+  code, kind
+  palletCapacity
+}
+class Asn {
+  asnNumber
+  supplierName
+  expectedArrival
+  status (EXPECTED..RECEIVED)
+}
+class Pallet {
+  SSCC (18-digit GS1)
+  GTIN, skuCode
+  quantity, grossWeightKg
+  binCode
+}
+class InboundArrival {
+  shipmentNumber
+  sscc, grossWeightKg
+  status (OPEN)
+}
+class Shipment {
+  shipmentNumber
+  equipmentCode (ISO 6346)
+  sscc, destinationGln
+  incoterm, grossWeightKg
+  savedCo2eKg, eCmrUri
+  status (PLANNED..DELIVERED)
+}
+class TransportLeg {
+  sequenceOrder
+  mode (ROAD/RAIL/SEA/...)
+  origin, destination
+  distanceKm, distanceSource
+}
+class Territory {
+  territoryCode, name
+  hubGln, center, radiusKm
+}
+class RoutePlan {
+  routeCode, vehiclePlate
+  capacityKg, totalKm, durationMin
+}
+class RouteStop {
+  stopCode, sequenceOrder
+  shipmentNumber
+  status (PLANNED/COMPLETED)
+  ePodUri
+}
+class MonthlyReport {
+  deliveryMonth (yyyy-MM)
+  objectKey (RustFS PDF)
+  deliveredShipments
+  totalDistanceKm, savedCo2eKg
+}
+class ChannelPreference {
+  emailEnabled, emailAddress
+  webhookEnabled, webhookUrl
+}
+
+Warehouse "1" *-- "0..*" BinLocation : contains
+Warehouse "1" -- "0..*" Asn : expects
+Asn "1" -- "0..*" Pallet : received as
+Warehouse "1" -- "0..*" InboundArrival : receives
+Shipment "1" *-- "1..*" TransportLeg : consists of
+Shipment "1" ..> "0..1" InboundArrival : opens via Flow 2
+Territory "1" -- "0..*" RoutePlan : planned in
+RoutePlan "1" *-- "1..*" RouteStop : visits in order
+RouteStop "0..1" ..> "0..1" Shipment : delivers via Flow 3
+MonthlyReport "0..*" ..> "1" ChannelPreference : delivered via S13
+@enduml
+....
+
+== Business rules catalogue
+
+[cols="1,4,2",options="header"]
+|===
+| ID | Rule | When violated
+
+| `BR-SEC-01` | Every business action requires a valid JWT verified locally against Identity's JWKS. | Rejected (`401`)
+| `BR-SEC-02` | Every endpoint enforces role-based access via `@PreAuthorize`. | Rejected (`403`)
+| `BR-SEC-03` | A user only reads or mutates their own tenant's data; cross-tenant IDs appear absent. | `404` or empty list
+| `BR-SEC-04` | Tenant IDs strictly match `[a-z0-9][a-z0-9-]{1,63}` (`TenantIds`). | Rejected (`401`)
+| `BR-WMS-01` | Warehouse GLN has 13 digits and a valid GS1 Mod-10 check digit. | Rejected (`400`)
+| `BR-WMS-02` | Product GTIN has 8, 12, 13, or 14 digits with a valid GS1 check digit. | Rejected (`400`)
+| `BR-WMS-03` | Every received pallet receives a unique, sequence-backed 18-digit GS1 SSCC. | Rejected (`400`)
+| `BR-WMS-04` | Receiving all announced ASN quantities closes the ASN as `RECEIVED`; further receipts are refused. | Rejected (`409` / `400`)
+| `BR-TMS-01` | Container/trailer equipment codes follow ISO 6346 with a valid check digit. | Rejected (`400`)
+| `BR-TMS-02` | Shipment pallet SSCC has 18 digits and a valid GS1 check digit. | Rejected (`400`)
+| `BR-TMS-03` | Shipment numbers come from PostgreSQL sequences and are never reused. | —
+| `BR-TMS-04` | CO₂e per leg = `distanceKm × tonnes × modeFactor`; savings compare against all-road (`ROAD`). | —
+| `BR-TMS-05` | Shipments progress strictly forward (`PLANNED → PICKED_UP → DEPARTED → DELIVERED`); steps may be skipped, never reversed. | Rejected (`409`)
+| `BR-GEO-01` | Total stop demand cannot exceed `vehicleCapacityKg`; routes cap at `99` stops (`BR-GEO-02`). | Rejected (`400`)
+| `BR-GEO-03` | Routes with > 8 stops or any time window (`readyMinutes`/`dueMinutes`) are optimized by Timefold; shorter routes use nearest-neighbour. | Rejected (`400` if infeasible)
+| `BR-DOC-01` | Legal documents (e-CMR, e-POD) are **write-once**: presigned PUT signs `If-None-Match: *`. | `409` (app) / `412` or `403` (RustFS)
+| `BR-REP-01` | Analytics tables enforce PostgreSQL `FORCE RLS`; `set_config()` is revoked from `PUBLIC`. | `0` rows or `42501`
+| `BR-REP-02` | Monthly PDF reports build once per `(tenant, yyyy-MM)` from `tenant_delivery_monthly` (`201`); repeats return the stored report (`200`) without re-notifying. | —
+| `BR-REP-03` | Per-channel delivery (`email`, `webhook`) is idempotent via `sent_delivery(report_id, channel)`; failed sends retry then move to `.dlt`. | Dead-letter topic
+|===
+
+== Industry standards & emissions calculation
+
+All domain standards live once in `ff-domain-standards`:
+
+* **GS1 identifiers (`Gs1Standards`)**:
+  ** **SSCC** (18-digit Serial Shipping Container Code) with Mod-10 check digit generated automatically for every received pallet.
+  ** **GLN** (13-digit Global Location Number) with check digit identifying warehouses and consignee docks (used to route Flow 2 arrivals).
+* **ISO 6346 container codes (`Iso6346ContainerCode`)**: validates owner prefix, equipment category (`U`/`J`/`Z`), serial digits, and check digit (e.g. `CSQU3054383`).
+* **Greenhouse gas footprint (`EmissionsCalculator`)**:
+  ** Implements **EN 16258 / ISO 14083 (GLEC Framework)**: sums `distanceKm × grossWeightTonnes × factor` across all legs, compares against a 100% road baseline (`ROAD`), and calculates `savedCo2eKg`, `reductionPercent`, and `treeYearsSaved` (`21.77 kg CO₂e / tree-year`).
+  ** Both Superset dashboards (S8) and monthly PDF reports (S13) read the pre-computed `tenant_delivery_monthly` rollup—no duplicate carbon formula exists downstream.
+
+[cols="2,1,3",options="header"]
+|===
+| Transport mode | g CO₂e / tonne-km | Description
+
+| `ROAD` | 62.0 | Road, heavy goods vehicle (baseline)
+| `RAIL` | 22.0 | Rail, intermodal block train
+| `INLAND_WATERWAY` | 28.0 | Inland waterway barge
+| `SEA_RORO` | 31.0 | Sea, Ro-Ro or short-sea vessel
+| `AIR` | 602.0 | Air cargo
+|===
+
+== Multi-tenancy & role permission matrix
+
+Every authenticated request carries a `tenant_id` claim verified locally against Identity's JWKS (xref:security.adoc[Security & Multi-Tenancy]). Operations are guarded by method-level `@PreAuthorize` rules:
+
+[cols="2,2,3",options="header"]
+|===
+| Role | Primary areas | Allowed operations
+
+| `WAREHOUSE_OPERATOR` | Warehousing | Warehouses, bins, ASNs, pallet receiving, inbound arrivals (`/api/v1/wms/**`)
+| `LOGISTICS_PLANNER` | Transportation, BI & Reporting | Shipments, multimodal legs, e-CMR links, road distance lookup, Superset guest-token exchange (`POST /api/v1/guest-tokens`), monthly PDF reports & channels (`/reporting/api/v1/reports/**`)
+| `DISPATCHER` | Routing | Territories, Timefold route plans, stop completion, e-POD links, road distance lookup (`/api/v1/geo/**`)
+| `REPORT_VIEWER` | BI & Reporting | Monthly PDF reports and tenant analytics access
+| `TENANT_ADMIN` | All tenant areas | Full access to WMS, TMS, GEO, Reporting, plus tenant user and integration-client management (`/api/v1/users`, `/api/v1/integration-clients`)
+|===
+
+.Seeded demo accounts (local k3d cluster)
+[cols="2,2,3",options="header"]
+|===
+| Username | Tenant | Roles
+
+| `nexus.planner` | `ff-eu-freight` | `TENANT_ADMIN`, `LOGISTICS_PLANNER`, `WAREHOUSE_OPERATOR`, `REPORT_VIEWER`
+| `geodispatch.operator` | `ff-tr-distribution` | `TENANT_ADMIN`, `DISPATCHER`, `LOGISTICS_PLANNER`, `REPORT_VIEWER`
+|===
+
+== Where to go next
+
+* xref:glossary.adoc[Glossary] — concise definitions of logistics and platform terms.
+* xref:try-console.adoc[End-User Console Guide] — screen-by-screen walkthrough of Depo, Sevkiyat, Rota and Rapor.
+* xref:try-reporting.adoc[Monthly PDF Reports & Notifications] — S13 PDF output, Mailpit delivery and tenant isolation.
+* xref:security.adoc[Security & Multi-Tenancy] — defense-in-depth tenant isolation from JWT to PostgreSQL `FORCE RLS`.

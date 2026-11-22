@@ -18,6 +18,49 @@ flowchart LR
   SU -->|"6. analytics_reader<br/>-c app.tenant_id=<tenant>"| PG2[("ff_logistics_analytics<br/>FORCE RLS<br/>REVOKE set_config")]
 ....
 
+== Three-gate request pipeline & JWKS relay
+
+Only `identity-service` communicates with Keycloak (refreshing realm keys every 15 seconds). Domain services and `shared/reporting` verify every JWT offline and enforce three framework-level gates before business code executes:
+
+[plantuml,security-three-gates,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+actor Caller
+participant "identity-service\n:8085" as id
+participant "Keycloak\n(realm ff-logistics)" as kc
+participant "BearerTokenFilter\n(Gate 1: Who)" as bearer
+participant "TenantContextFilter\n(Gate 2: Tenant)" as tenant
+participant "@PreAuthorize\n(Gate 3: Role)" as authz
+participant "Service" as svc
+database "PostgreSQL\n(@TenantId / RLS)" as db
+
+Caller -> id : POST /sessions {username, password}
+id -> kc : password grant (ff-logistics-api)
+kc --> id : JWT (tenant_id + realm roles)
+id --> Caller : accessToken (5 min)
+... every 15 s (cached in memory) ...
+id -> kc : GET realm certs (JWKS)
+
+Caller -> bearer : GET /api/v1/... Bearer <JWT>
+bearer -> id : GET /jwks (cached by JwtDecoder)
+bearer -> bearer : verify signature, exp, iss, aud,\nTenantIds regex
+alt invalid token or tenant_id
+  bearer --> Caller : 401 Unauthorized
+end
+bearer -> tenant : bind TenantContext(tenant_id)
+tenant -> authz : check ROLE_* authorities
+alt missing role
+  authz --> Caller : 403 Forbidden
+end
+authz -> svc : invoke use case
+svc -> db : WHERE tenant_id = ?\n(or SET LOCAL app.tenant_id)
+db --> svc : tenant rows only
+svc --> Caller : 200 JSON
+@enduml
+....
+
 == The six layers of isolation
 
 [cols="2,3,3",options="header"]
@@ -33,7 +76,7 @@ flowchart LR
 | Path traversal in S3 keys, SQL/clause injection, and tenant collisions from case or whitespace normalization.
 
 | *3. Role-based access & single-origin Console*
-| Realm roles (`TENANT_ADMIN`, `LOGISTICS_PLANNER`, `WAREHOUSE_OPERATOR`, `DISPATCHER`, `REPORT_VIEWER`) guard every endpoint. The Console serves `/identity` and `/api` behind one nginx origin (`localhost:8090`).
+| Realm roles (`TENANT_ADMIN`, `LOGISTICS_PLANNER`, `WAREHOUSE_OPERATOR`, `DISPATCHER`, `REPORT_VIEWER`) guard every endpoint. The Console serves `/identity`, `/reporting` (S13), and `/api` behind one nginx origin (`localhost:8090`).
 | Privilege escalation across roles and browser cross-origin credential leakage.
 
 | *4. Write-once object storage (RustFS)*
@@ -41,7 +84,7 @@ flowchart LR
 | Cross-tenant object access and overwriting legal documents (e-CMR, e-POD) — enforced both by the application (`409`) and by RustFS (`412` / `403`).
 
 | *5. PostgreSQL `FORCE ROW LEVEL SECURITY`*
-| Every table in `ff_logistics_analytics` enables and forces RLS. Dashboards connect as `analytics_reader` (`NOSUPERUSER NOBYPASSRLS`). A session without `app.tenant_id` sees zero rows, and `EXECUTE` on `pg_catalog.set_config` is revoked from `PUBLIC`.
+| Every table in `ff_logistics_analytics` enables and forces RLS. Both Superset and `shared/reporting` (`MonthlyFiguresReader`, S13) connect as `analytics_reader` (`NOSUPERUSER NOBYPASSRLS`) using transaction-scoped `SET LOCAL app.tenant_id`. A session without `app.tenant_id` sees zero rows, and `EXECUTE` on `pg_catalog.set_config` is revoked from `PUBLIC`.
 | Cross-tenant reads from a forgotten `WHERE` clause or from an inline SQL expression attempting to widen session scope mid-query.
 
 | *6. Superset guest tokens & connection mutator*

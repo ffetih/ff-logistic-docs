@@ -1,7 +1,19 @@
 = Try it: the console
-:description: S9 as numbered steps: one origin on 8090, sign-in through identity, and the monthly chart embedded for the caller's tenant.
+:description: End-user Console guide (S9 & S13): one origin on 8090, role-to-screen overview, warehouse, shipment, route map, embedded Superset dashboard, and monthly PDF reports.
 
-The console is one origin, `http://localhost:8090`. nginx sends `/identity` to identity and `/api` to the edge. The report page asks identity for a guest token and opens the monthly dashboard in an iframe. The figure is the one already on xref:try-superset.adoc#chart[the Superset page]: `ff-eu-freight`, November 2026, 7409. The same origin then received a pallet, delivered the shipment that carried it, and planned a route.
+The console is one origin, `http://localhost:8090`. nginx sends `/identity` to identity, `/reporting` to reporting (S13), and `/api` to the edge. The report page embeds the monthly Superset dashboard with a guest token and triggers S13 monthly PDF reports and notification channels.
+
+.End-user role guide: which screen does what?
+[cols="2,2,4",options="header"]
+|===
+| Console page | Primary role(s) | Main actions
+
+| *Depo* | `WAREHOUSE_OPERATOR`, `TENANT_ADMIN` | Manage warehouses & bins, announce ASNs, receive pallets with automatic GS1 SSCC labels, view auto-opened inbound arrivals
+| *Sevkiyat* | `LOGISTICS_PLANNER`, `TENANT_ADMIN` | Plan multimodal shipments (with EN 16258 / ISO 14083 CO₂e savings), track pickup/departure/delivery, upload & download write-once e-CMR
+| *Rota* | `DISPATCHER`, `TENANT_ADMIN` | Define territories, optimize stops with Timefold on OpenStreetMap, complete stops (Flow 3), upload & download e-POD
+| *Rapor* | `LOGISTICS_PLANNER`, `REPORT_VIEWER`, `TENANT_ADMIN` | Open the embedded tenant-scoped Superset BI dashboard, generate/download monthly PDF reports, and configure Email/Webhook delivery channels (xref:try-reporting.adoc[S13 Reporting])
+| *Yönetim* | `TENANT_ADMIN` | Manage tenant users, integration clients, and open live Jaeger traces for cluster services
+|===
 
 The answers shown are from the first run, on 2026-11-22. The console was synced to `394f8b0`. Superset was synced to `dc56530`, which is the commit that allows this origin to embed the dashboard.
 

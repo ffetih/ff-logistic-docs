@@ -100,6 +100,9 @@ image::argocd/logistics-app.png[Argo CD resource tree for logistics-app with Rol
 .Jaeger 2.4: OpenTelemetry trace timeline (`POST /api/v1/geo/routes`, 7 spans, JWT & role authorization visible per span)
 image::tracing/jaeger-routing-plan.png[Jaeger UI showing distributed trace 563b64f for logistics-app POST /api/v1/geo/routes with 7 OpenTelemetry spans]
 
+.Reporting & Notifications (S13): monthly PDF generation from `tenant_delivery_monthly`, RustFS Claim Check, Kafka `report-ready`, and Mailpit delivery
+image::reporting/console-report.png[Console Rapor page showing generated 2026-11 monthly report figures (7412 shipments, 88067.4 km, 7772.4 kg CO2e saved), Mailpit link, and channel preferences]
+
 == Technology stack
 
 [cols="2,5",options="header"]
@@ -108,22 +111,74 @@ image::tracing/jaeger-routing-plan.png[Jaeger UI showing distributed trace 563b6
 
 | Language & Runtime | Java 25 (virtual threads), Spring Boot 4.1, Spring Modulith 2.1, Maven Wrapper
 | Data & Analytics | PostgreSQL 17, Flyway (per-area history tables), PostgreSQL `FORCE RLS`, Apache Superset 4.1
+| Reporting & Notifications | `shared/reporting` (`generation` + `delivery` modules), OpenHTMLToPDF (`pdfbox`), Mailpit SMTP, HTTP webhooks
 | Messaging & Contracts | Apache Kafka 4.2 (KRaft), transactional outbox (`event_publication`), JSON contract tests (`ff-contracts`)
 | Optimization & Storage | Timefold Solver (time windows), RustFS (S3-compatible, SigV4 presigned write-once links)
 | Identity & Edge | Keycloak 26.8, dedicated Identity facade + JWKS, nginx single-origin console & gateway
 | Observability & Delivery | OpenTelemetry, Jaeger 2.4, k3d, Argo CD 3.6, Argo Rollouts 1.10, Helm, Kustomize, GitHub Actions, GHCR, k6
 |===
 
-== Where to go next
+[[guides-by-role]]
+== Start by your role
 
-[cols="2,4",options="header"]
-|===
-| Reading path | Start here
+Choose your perspective to jump straight to the pages built for your workflow:
 
-| *Architect review (5 min)* | xref:architecture.adoc[Architecture] → xref:comparison.adoc[Comparison] → xref:security.adoc[Security & Multi-Tenancy] → xref:decisions.adoc[Decisions]
-| *DevOps & GitOps review* | xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:switching.adoc[Switching sides]
-| *Try it yourself* | xref:runtime::cluster-guide.adoc[Cluster guide] → xref:walkthrough.adoc#collection[Walkthrough + Postman / IntelliJ HTTP collection]
-| *Roadmap* | xref:plan.adoc[Plan] (S0–S9 & S12 completed; S13 reporting & notification, S14 multi-cluster/workflows, S15–S16 partner gateways)
-|===
+[.role-tabs]
+--
+[[role-architect]]
+[.role-tab,caption=""]
+.Architect
+====
+Evaluate the real, measured trade-offs between a modular monolith and microservices built from the same domain jars.
+
+* *Core reading path:* xref:architecture.adoc[Architecture] → xref:comparison.adoc[Measured Comparison] → xref:security.adoc[Security & Multi-Tenancy] → xref:decisions.adoc[Decisions (ADRs)]
+* *Failure evidence:* xref:try-load.adoc[Kafka outage], xref:try-database.adoc[Database outage], xref:try-routing-away.adoc[Routing service outage]
+* *Key takeaway:* ~40% less idle RAM and ~37% lower cross-area median latency on the modular monolith with identical API and resilience guarantees.
+====
+
+[[role-ba]]
+[.role-tab,caption=""]
+.Business Analyst
+====
+Review the end-to-end freight forwarding processes, domain state machines, industry standards, and tenant role permissions without reading code.
+
+* *Core reading path:* xref:domain.adoc[Business Flows & Domain Rules] → xref:glossary.adoc[Glossary] → xref:try-console.adoc[Console Guide] → xref:try-reporting.adoc[Monthly PDF Reports]
+* *What is covered:* ASN → Pallet (GS1 SSCC/GLN) → Multimodal Shipment (EN 16258 / ISO 14083 CO₂e) → Timefold Route → e-CMR / e-POD → Analytics & PDF notifications.
+* *Tenant governance:* exact `@PreAuthorize` role matrix (`WAREHOUSE_OPERATOR`, `LOGISTICS_PLANNER`, `DISPATCHER`, `REPORT_VIEWER`, `TENANT_ADMIN`).
+====
+
+[[role-developer]]
+[.role-tab,caption=""]
+.Developer
+====
+Build the six repositories in order, run and debug services from IntelliJ IDEA against the local k3d cluster, and follow the architecture guardrails.
+
+* *Core reading path:* xref:local-dev.adoc[Developer Guide: Local Run & Guardrails] → xref:walkthrough.adoc#collection[Postman & IntelliJ HTTP Collections (S1–S13)] → xref:architecture.adoc[Ports & Adapters]
+* *Quick local setup:* PostgreSQL `localhost:5432`, Kafka `localhost:9094`, Keycloak `localhost:8180`, RustFS `localhost:9000`, Mailpit `localhost:8092`, or `--spring.profiles.active=local` for header fallback.
+* *Guardrails:* `ModularityTest`, `ff-contracts`, per-area Flyway migrations, and `@Profile("!migrate")`.
+====
+
+[[role-devops]]
+[.role-tab,caption=""]
+.DevOps / SRE
+====
+Inspect declarative GitOps, single-commit architecture switching, canary rollouts with automated health analysis, and distributed tracing.
+
+* *Core reading path:* xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:runtime::cluster-guide.adoc[Cluster Guide] → xref:switching.adoc[Switching Sides]
+* *Observability & drills:* xref:try-tracing.adoc[Distributed Tracing (Jaeger 2.4)], xref:try-load.adoc[k6 Load & Failure Drills]
+* *Roadmap:* xref:plan.adoc[Plan] — S0–S9, S12 and S13 complete; S14 multi-cluster/workflows and S15–S16 partner gateways next.
+====
+
+[[role-enduser]]
+[.role-tab,caption=""]
+.End-User
+====
+Walk through the live single-origin Console (`http://localhost:8090`) screen by screen: sign in, receive pallets, plan multimodal shipments, optimize routes, and export reports.
+
+* *Core reading path:* xref:try-console.adoc[Console User Guide] → xref:try-reporting.adoc[Monthly PDF Reports & Email Delivery] → xref:try-superset.adoc[Embedded BI Dashboards]
+* *Demo sign-in:* `nexus.planner` (`ff-eu-freight`) or `geodispatch.operator` (`ff-tr-distribution`), password `fflogistics2026`.
+* *Live outputs:* downloadable e-CMR/e-POD files, embedded Superset charts, monthly PDF downloads, and Mailpit email notifications on `http://localhost:8092`.
+====
+--
 
 The code lives across six repositories under https://github.com/ffetih?tab=repositories&q=ff-logistic[github.com/ffetih], all named `ff-logistic-*`.

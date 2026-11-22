@@ -405,10 +405,17 @@ What exists: Jaeger 2.4 on port `16686`, OpenTelemetry (`spring-boot-starter-ope
 
 The steps: xref:try-tracing.adoc[Try it: distributed tracing with Jaeger].
 
+[[s13]]
+== S13: monthly PDF reports and notifications
+
+What exists: one `shared/reporting` process (`generation` + `delivery` Spring Modulith modules) backed by `ff_reporting` (two module schemas plus outbox schema `reporting`), proxied through the console's nginx at `/reporting/` → `reporting:8089`. `generation` reads `tenant_delivery_monthly` as `analytics_reader` with `SET LOCAL app.tenant_id`, renders HTML → PDF in-process (`openhtmltopdf-pdfbox`), writes the PDF to RustFS (Claim Check), and publishes `ff.logistics.reporting.report-ready` to Kafka. `delivery` consumes it in consumer group `reporting-delivery` and notifies Mailpit SMTP (`http://localhost:8092`) and tenant webhooks with retry and DLT. What it showed, on 2026-11-22: `ff-eu-freight` November 2026 PDF (`7412` shipments, `88067.350 km`, `7772.400 kg` CO₂e saved) downloaded from RustFS and delivered to Mailpit with `Lag 0`.
+
+The steps: xref:try-reporting.adoc[Try it: monthly PDF reports and notifications].
+
 [[collection]]
 == The same calls, as a collection
 
-The calls on this page, in the order to run them, are a Postman collection and an IntelliJ HTTP Client file. The host ports and the two users are the environment file. In IntelliJ, select the `local` environment.
+The calls on this page (S1–S13, including reporting, delivery channels, cross-tenant negative tests and Mailpit inbox checks), in the order to run them, are a Postman collection and an IntelliJ HTTP Client file. The host ports and the two users are the environment file. In IntelliJ, select the `local` environment.
 
 * xref:attachment$ff-logistic.postman_collection.json[ff-logistic.postman_collection.json]
 * xref:attachment$http-client.env.json[http-client.env.json]
