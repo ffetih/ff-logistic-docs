@@ -1,0 +1,109 @@
+= Developer Guide: Local Run & Guardrails
+:description: Engineer onboarding for FF Logistic: six-repository Maven layout, IDE connection to local k3d services, local header-fallback profile, PostgreSQL inspection, and architectural guardrails.
+
+This guide is for **software engineers** building, debugging, or extending FF Logistic. For cluster bootstrap see xref:runtime::cluster-guide.adoc[Cluster guide]; for CI pipelines and GHCR publishing see xref:delivery.adoc[Delivery: CI, Maven, GHCR].
+
+== Six-repository Maven layout & build order
+
+All six repositories sit side by side under one workspace folder (`base`, `shared`, `modulith`, `services`, `runtime`, `docs`). Maven builds follow the dependency graph strictly in this order on **Java 25**:
+
+[source,bash]
+----
+# 1. BOM, parent POM and reusable technical starters
+cd base && ./build.sh
+
+# 2. Domain cores, event contracts, identity, analytics-loader, reporting
+cd ../shared && ./build.sh
+
+# 3. Either or both business implementations
+cd ../modulith && ./build.sh
+cd ../services && ./build.sh
+----
+
+[.media-grid]
+--
+.Base libraries (`ff-base-*`)
+image::dev/maven-base.png[IntelliJ Maven tree showing FF Logistic Base modules: Application chassis, Base BOM, Base Parent, Events, Persistence, Security, Storage, Tenant, Web]
+
+.Shared cores & platform services (`shared`)
+image::dev/maven-shared.png[IntelliJ Maven tree showing FF Logistic Shared modules: Analytics loader, Domain Routing/Standards/Transportation/Warehousing, Event contracts, Identity, Reporting]
+
+.Microservices wiring (`services`)
+image::dev/maven-services.png[IntelliJ Maven tree showing FF Logistic Services modules: routing, transportation, warehousing]
+--
+
+== Connecting your IDE to the local k3d cluster
+
+Every platform dependency in `ff-logistic` is published on a fixed `localhost` NodePort (`runtime/deploy/cluster/k3d-config.yaml`). Default `application.yml` values already target these ports, so starting a Spring Boot application from IntelliJ IDEA works immediately once the cluster is running:
+
+[cols="2,2,3",options="header"]
+|===
+| Dependency | Host / IDE address | Notes & credentials (local only)
+
+| PostgreSQL 17 | `localhost:5432` | Admin/app user `fflogistics` / `fflogisticsDb2026` (`ff_logistics`, `ff_logistics_analytics`, `ff_reporting`, `superset`). Analytics RLS reader: `analytics_reader` / `analyticsReader2026`.
+| Apache Kafka 4.2 | `localhost:9094` | External `PLAINTEXT` listener (Authentication: `None`). Port `9092` is cluster-internal only.
+| Keycloak 26.8 | `http://localhost:8180` | Realm `ff-logistics`; JWT issuer `http://localhost:8180/realms/ff-logistics`
+| Identity service | `http://localhost:8085` | JWKS at `/jwks`, login at `/sessions`
+| RustFS (S3) | `http://localhost:9000` | Set `STORAGE_PROVIDER=s3` + access/secret keys when testing presigned links from the IDE
+| Console / Reporting proxy | `http://localhost:8090` | `/identity/` → identity, `/reporting/` → reporting, `/api/` → edge
+| Mailpit UI | `http://localhost:8092` | Captures S13 report emails; REST inbox at `/api/v1/messages` (SMTP in cluster: `mailpit:1025`)
+| Jaeger UI | `http://localhost:16686` | OTLP/HTTP trace viewer
+|===
+
+=== Running without Keycloak (`local` profile)
+
+Activate the `local` profile to bypass JWT sign-in during local IDE debugging (never enabled in cluster containers):
+
+[source,bash]
+----
+--spring.profiles.active=local
+----
+
+This enables `ff.security.header-fallback.enabled=true` (`application-local.yml`), letting you pass tenant and roles directly via HTTP headers:
+
+[source,bash]
+----
+curl -H 'X-Tenant-Id: ff-eu-freight' \
+     -H 'X-User-Name: dev.local' \
+     -H 'X-User-Roles: TENANT_ADMIN,LOGISTICS_PLANNER,WAREHOUSE_OPERATOR,DISPATCHER' \
+     http://localhost:8081/api/v1/me
+----
+
+== Inspecting PostgreSQL: per-area Flyway & RLS
+
+Each domain area owns its own Flyway history table inside `ff_logistics` (`warehousing_flyway_history`, `transportation_flyway_history`, `routing_flyway_history`), while outbox tables live in per-process schemas (`modulith`, `transportation`, `routing`, `reporting`).
+
+In `ff_logistics_analytics`, connecting as `analytics_reader` returns **zero rows** until a session explicitly scopes its tenant via `SET app.tenant_id` (and internal tables like `delivery_month_changes` are refused with `42501 permission denied` by design):
+
+[.media-grid]
+--
+.`ff_logistics`: per-area tables and Flyway history tables
+image::dev/postgres-flyway.png[IntelliJ Database view of ff_logistics showing geo, tms, wms tables and separate routing, transportation, and warehousing Flyway history tables]
+
+.`ff_logistics_analytics`: live RLS query as `analytics_reader`
+image::dev/postgres-rls.png[IntelliJ SQL console executing SET app.tenant_id = ff-eu-freight and querying tenant_delivery_monthly and shipment_deliveries]
+--
+
+== Architectural guardrails every PR must pass
+
+. **Wiring-agnostic domain cores**: business rules live once in `shared/domain/ff-domain-*`. Declare a Java port interface instead of importing HTTP clients or Kafka adapters into a core (xref:architecture.adoc[Architecture]).
+. **Spring Modulith verification**: `ModularityTest` (`ApplicationModules.of(...).verify()`) enforces module boundaries both across jars in `modulith` and between `generation`/`delivery` inside `shared/reporting` (xref:decisions.adoc#d2[decision 2]).
+. **Shared event contracts (`ff-contracts`)**: update topic names and sample JSON payloads in `shared/ff-contracts` first so `modulith`, `services`, and `reporting` all validate against one contract (xref:decisions.adoc#d14[decision 14]).
+. **Per-area migrations & `@Profile("!migrate")`**: every Flyway area is registered via `MigrationArea`; background Kafka listeners, mail senders, and webhooks must carry `@Profile("!migrate")` so PreSync migration Jobs start fast and exit cleanly.
+
+== Where a change belongs
+
+[cols="2,4",options="header"]
+|===
+| Change type | Repositories touched
+
+| Business rule or endpoint in an existing area | `shared` (domain core + Flyway + tests) → rebuild `modulith` & `services`
+| New cross-area flow | `shared` (port + event + `ff-contracts`) → `modulith` (in-process adapter) → `services` (REST/Kafka adapter)
+| Switch-independent platform service (`identity`, `analytics-loader`, `reporting`) | `shared` (module + `deploy/apps/<name>`) → `runtime` (Argo CD Application)
+|===
+
+== Related guides
+
+* xref:architecture.adoc[Architecture] — hexagonal ports, adapters, and the modulith/services switch.
+* xref:decisions.adoc[Decisions (ADRs)] — rationale behind each technical boundary.
+* xref:walkthrough.adoc#collection[Walkthrough & API Collections] — ready-to-run Postman and IntelliJ `.http` collections covering S1–S13.

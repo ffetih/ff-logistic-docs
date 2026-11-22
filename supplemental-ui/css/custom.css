@@ -328,6 +328,132 @@
   font-size: 0.88rem;
 }
 
+/* Interactive role-based tabs ([.role-tabs] wrapping [.role-tab] example blocks) */
+@property --fade-start {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+@property --fade-end {
+  syntax: "<length>";
+  inherits: false;
+  initial-value: 0px;
+}
+
+.doc .openblock.role-tabs {
+  margin-block: 1.25rem;
+}
+
+.doc .role-tablist {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.25rem;
+  overflow-x: auto;
+  scrollbar-width: none;
+  scroll-snap-type: inline proximity;
+  border-block-end: 1px solid var(--ff-border);
+  margin-block-end: 0;
+  --fade-size: 2rem;
+  scroll-padding-inline: var(--fade-size);
+  mask:
+    linear-gradient(black, black) no-clip subtract,
+    linear-gradient(to right, black, transparent) 0 0 / var(--fade-start) 100% no-repeat no-clip,
+    linear-gradient(to right, transparent, black) 100% 0 / var(--fade-end) 100% no-repeat no-clip;
+  animation: ff-tab-fade-start linear both, ff-tab-fade-end linear both;
+  animation-timeline: scroll(self inline);
+  animation-range: 0 var(--fade-size), calc(100% - var(--fade-size)) 100%;
+}
+
+.doc .role-tablist::-webkit-scrollbar {
+  display: none;
+}
+
+@keyframes ff-tab-fade-start {
+  to {
+    --fade-start: var(--fade-size);
+  }
+}
+
+@keyframes ff-tab-fade-end {
+  from {
+    --fade-end: var(--fade-size);
+  }
+}
+
+.doc .role-tab-btn {
+  position: relative;
+  flex: none;
+  scroll-snap-align: start;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--ff-text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 0.9rem;
+  font-weight: 600;
+  line-height: 1.4;
+  padding: 0.65rem 1rem;
+  white-space: nowrap;
+}
+
+.doc .role-tab-btn:hover {
+  color: var(--ff-text-strong);
+}
+
+.doc .role-tab-btn[aria-selected="true"] {
+  color: var(--ff-accent);
+}
+
+.doc .role-tab-btn[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0;
+  border-block-end: 3px solid var(--ff-accent);
+}
+
+/* Panels: no border/padding/margin/background on the [role=tabpanel] wrapper itself so
+ * hidden="until-found" leaves zero empty strip; place visual card styling on > .content. */
+.doc .role-tabs[data-tabs-ready] > .content {
+  display: grid;
+  gap: 0;
+}
+
+.doc .role-tabs[data-tabs-ready] .exampleblock.role-tab {
+  grid-area: 1 / 1;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.doc .role-tabs .exampleblock.role-tab > .content {
+  background: var(--ff-surface);
+  border: 1px solid var(--ff-border);
+  border-block-start: 0;
+  border-radius: 0 0 var(--ff-radius) var(--ff-radius);
+  box-shadow: var(--ff-shadow-card);
+  padding: 1.15rem 1.3rem;
+}
+
+.doc .role-tabs .exampleblock.role-tab > .content > :first-child {
+  margin-block-start: 0;
+}
+
+/* Side-by-side compact screenshot row (e.g. Maven module trees in Developer Guide) */
+.doc .media-grid > .content {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+  gap: 1rem;
+  align-items: start;
+  margin-block: 1.25rem;
+}
+
+.doc .media-grid .imageblock {
+  margin-block: 0;
+}
+
 /* Footer */
 footer.footer {
   background: var(--ff-surface-subtle);

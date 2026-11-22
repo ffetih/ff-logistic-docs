@@ -1,20 +1,24 @@
 * xref:index.adoc[Overview]
 
-.Benchmarks & Comparison
+.Architecture & Benchmarks (Architect)
 * xref:comparison.adoc[Comparison]
+* xref:architecture.adoc[Architecture]
+* xref:security.adoc[Security & Multi-Tenancy]
+* xref:decisions.adoc[Decisions (ADRs)]
 * xref:try-load.adoc[Load: Kafka away]
 * xref:try-database.adoc[Load: database away]
 * xref:try-routing-away.adoc[Load: routing away]
 
-.Architecture & Security
-* xref:architecture.adoc[Architecture]
-* xref:security.adoc[Security & Multi-Tenancy]
-* xref:decisions.adoc[Decisions (ADRs)]
+.Business & End-User (BA & Console)
+* xref:domain.adoc[Business Flows & Domain Rules]
+* xref:try-console.adoc[Console User Guide]
+* xref:try-reporting.adoc[Monthly PDF Reports & Mailpit]
+* xref:try-superset.adoc[Embedded BI (Superset)]
 * xref:glossary.adoc[Glossary]
 
-.Hands-On Walkthrough
-* xref:walkthrough.adoc[Walkthrough & Collection]
-* xref:switching.adoc[Switching sides: what happens]
+.Developer Guide (Developer)
+* xref:local-dev.adoc[Local Run & Guardrails]
+* xref:walkthrough.adoc[Walkthrough & API Collections]
 ** xref:try-warehousing.adoc[Try it: a warehouse]
 ** xref:try-shipment.adoc[Try it: a shipment to a warehouse]
 ** xref:try-failures.adoc[Try it: failure drills]
@@ -22,14 +26,13 @@
 ** xref:try-flows.adoc[Try it: routing talks to transportation]
 ** xref:try-documents.adoc[Try it: documents, written once]
 ** xref:try-analytics.adoc[Try it: analytics, from either side]
-** xref:try-superset.adoc[Try it: one tenant's months]
-** xref:try-console.adoc[Try it: the console]
-** xref:try-tracing.adoc[Try it: tracing with Jaeger]
 
-.Delivery & GitOps
+.Delivery & Operations (DevOps)
 * xref:gitops.adoc[GitOps: Argo CD & Rollouts]
 * xref:delivery.adoc[Delivery: CI, Maven, GHCR]
 * xref:runtime::cluster-guide.adoc[Cluster guide]
+* xref:switching.adoc[Switching sides: what happens]
+* xref:try-tracing.adoc[Tracing with Jaeger]
 * xref:plan.adoc[Plan]
 
 .Repositories

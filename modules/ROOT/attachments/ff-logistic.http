@@ -1,4 +1,4 @@
-# FF Logistic — Uçtan Uca (E2E) API Akışı (S1 -> S8)
+# FF Logistic — Uçtan Uca (E2E) API Akışı (S1 -> S13)
 # ==============================================================================
 # Kullanım:
 #   IntelliJ IDEA'da sağ üstten ortam olarak "local" seçin (http-client.env.json).
@@ -33,6 +33,20 @@ GET {{superset}}/health
 
 > {%
     client.test("Superset healthy", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 0.5 Reporting readiness (konsol nginx /reporting -> reporting:8089)
+GET {{reporting}}/actuator/health/readiness
+
+> {%
+    client.test("Reporting ready", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 0.6 Mailpit readiness (localhost:8092)
+GET {{mailpit}}/readyz
+
+> {%
+    client.test("Mailpit ready", () => client.assert(response.status === 200, "Expected 200"));
 %}
 
 ################################################################################
@@ -684,4 +698,99 @@ Content-Type: application/json
 
 > {%
     client.test("TR shipment delivered", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+################################################################################
+### 8. REPORTING & NOTIFICATION (S13 — localhost:8090/reporting + Mailpit :8092)
+# Tek JVM süreci (shared/reporting): generation + delivery Spring Modulith modülleri.
+# Raporlar tenant_delivery_monthly tablosundan RLS (SET LOCAL app.tenant_id) ile
+# okunur, OpenHTMLToPDF ile PDF üretilir, RustFS'e yazılır ve Kafka
+# ff.logistics.reporting.report-ready üzerinden Mailpit / Webhook'a iletilir.
+################################################################################
+
+### 8.1 Tenant teslimat kanallarını oku (E-posta & Webhook tercihleri)
+GET {{reporting}}/api/v1/reports/channels
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Channels loaded", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 8.2 E-posta teslimat kanalını kaydet (Mailpit'e düşer)
+PUT {{reporting}}/api/v1/reports/channels
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "emailEnabled": true,
+  "emailAddress": "planner@ff-eu-freight.test",
+  "webhookEnabled": false,
+  "webhookUrl": null
+}
+
+> {%
+    client.test("Channels updated", () => {
+        client.assert(response.status === 200, "Expected 200");
+        client.assert(response.body.emailEnabled === true, "Expected emailEnabled=true");
+    });
+%}
+
+### 8.3 Aylık PDF raporu üret (ilk üretim 201 Created + Kafka event; tekrar çağrıda 200 OK)
+POST {{reporting}}/api/v1/reports/monthly
+Authorization: Bearer {{euToken}}
+Content-Type: application/json
+
+{
+  "month": "{{reportMonth}}"
+}
+
+> {%
+    client.test("Monthly report ready (201 or 200)", () => {
+        client.assert(response.status === 201 || response.status === 200, "Expected 201 or 200");
+    });
+    client.global.set("reportId", response.body.id);
+    client.global.set("reportDownloadUrl", response.body.downloadUrl);
+%}
+
+### 8.4 Tenant'a ait üretilmiş raporları listele
+GET {{reporting}}/api/v1/reports
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Reports listed", () => client.assert(response.status === 200, "Expected 200"));
+    if (!client.global.get("reportId") && response.body.length > 0) {
+        client.global.set("reportId", response.body[0].id);
+        client.global.set("reportDownloadUrl", response.body[0].downloadUrl);
+    }
+%}
+
+### 8.5 Tekil raporu taze 15 dakikalık RustFS indirme linkiyle getir
+GET {{reporting}}/api/v1/reports/{{reportId}}
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Report fetched", () => client.assert(response.status === 200, "Expected 200"));
+    client.global.set("reportDownloadUrl", response.body.downloadUrl);
+%}
+
+### 8.6 Aylık PDF dosyasını doğrudan RustFS'ten (localhost:9000) indir
+GET {{reportDownloadUrl}}
+
+> {%
+    client.test("Monthly PDF downloaded from RustFS", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+### 8.7 Negatif İzolasyon Testi: TR kullanıcısı EU rapor ID'sini okumaya çalışırsa -> 404 Not Found
+GET {{reporting}}/api/v1/reports/{{reportId}}
+Authorization: Bearer {{trToken}}
+
+> {%
+    client.test("Cross-tenant report access refused with 404", () => client.assert(response.status === 404, "Expected 404"));
+%}
+
+### 8.8 Mailpit gelen kutusunu kontrol et (E-postanın ulaştığını doğrula)
+GET {{mailpit}}/api/v1/messages
+
+> {%
+    client.test("Mailpit inbox queried", () => client.assert(response.status === 200, "Expected 200"));
 %}

@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "FF Logistic — E2E Walkthrough (S1-S8)",
-    "description": "FF Logistic uçtan uca API akışı (S1 -> S8): Identity, Warehousing (WMS), Transportation (TMS + Flow 1 & Flow 2), Routing (GEO + Flow 3), RustFS Documents (e-CMR / e-POD) ve Superset Multi-Tenant RLS.\n\nHem Modulith hem Services tarafında birebir aynı URL'lerle (edge :8081) çalışır. İstekleri sırayla çalıştırın; tüm token ve ID'ler otomatik olarak collection variable'larına kaydedilir.",
+    "name": "FF Logistic — E2E Walkthrough (S1-S13)",
+    "description": "FF Logistic uçtan uca API akışı (S1 -> S13): Identity, Warehousing (WMS), Transportation (TMS + Flow 1 & Flow 2), Routing (GEO + Flow 3), RustFS Documents (e-CMR / e-POD), Superset Multi-Tenant RLS ve Reporting & Notification (aylık PDF, teslimat kanalları, Mailpit).\n\nHem Modulith hem Services tarafında birebir aynı URL'lerle (edge :8081) çalışır. İstekleri sırayla çalıştırın; tüm token ve ID'ler otomatik olarak collection variable'larına kaydedilir.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -9,10 +9,13 @@
     { "key": "identity", "value": "http://localhost:8085" },
     { "key": "analytics", "value": "http://localhost:8086" },
     { "key": "superset", "value": "http://localhost:8088" },
+    { "key": "reporting", "value": "http://localhost:8090/reporting" },
+    { "key": "mailpit", "value": "http://localhost:8092" },
     { "key": "euUser", "value": "nexus.planner" },
     { "key": "trUser", "value": "geodispatch.operator" },
     { "key": "password", "value": "fflogistics2026" },
     { "key": "dashboardId", "value": "d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349" },
+    { "key": "reportMonth", "value": "2026-11" },
     { "key": "euToken", "value": "" },
     { "key": "trToken", "value": "" },
     { "key": "warehouseId", "value": "" },
@@ -28,7 +31,9 @@
     { "key": "epodDownloadUrl", "value": "" },
     { "key": "euGuestToken", "value": "" },
     { "key": "trGuestToken", "value": "" },
-    { "key": "trShipmentId", "value": "" }
+    { "key": "trShipmentId", "value": "" },
+    { "key": "reportId", "value": "" },
+    { "key": "reportDownloadUrl", "value": "" }
   ],
   "item": [
     {
@@ -83,6 +88,42 @@
           "request": {
             "method": "GET",
             "url": "{{superset}}/health"
+          }
+        },
+        {
+          "name": "0.5 Reporting Readiness (via Console nginx /reporting)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reporting ready (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{reporting}}/actuator/health/readiness"
+          }
+        },
+        {
+          "name": "0.6 Mailpit Readiness",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mailpit ready (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{mailpit}}/readyz"
           }
         }
       ]
@@ -975,6 +1016,196 @@
               "raw": "{\n  \"receivedBy\": \"Izmir Dock 1\"\n}"
             },
             "url": "{{edge}}/api/v1/tms/shipments/{{trShipmentId}}/delivery"
+          }
+        }
+      ]
+    },
+    {
+      "name": "8. Reporting & Notification (S13)",
+      "description": "shared/reporting (generation + delivery Spring Modulith modülleri). Konsol nginx /reporting -> reporting:8089 üzerinden erişilir. Aylık PDF üretir, RustFS'ten indirir, tenant izolasyonunu doğrular ve Mailpit (:8092) gelen kutusunu kontrol eder.",
+      "item": [
+        {
+          "name": "8.1 Get Delivery Channels (Email & Webhook)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Channels loaded (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{reporting}}/api/v1/reports/channels"
+          }
+        },
+        {
+          "name": "8.2 Configure Email Channel (Mailpit)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Email channel enabled (200)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().emailEnabled).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"emailEnabled\": true,\n  \"emailAddress\": \"planner@ff-eu-freight.test\",\n  \"webhookEnabled\": false,\n  \"webhookUrl\": null\n}"
+            },
+            "url": "{{reporting}}/api/v1/reports/channels"
+          }
+        },
+        {
+          "name": "8.3 Generate Monthly PDF Report (201 Created or 200 OK)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Monthly report ready (201 or 200)', () => pm.expect([200, 201]).to.include(pm.response.code));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('reportId', body.id);",
+                  "pm.collectionVariables.set('reportDownloadUrl', body.downloadUrl);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"month\": \"{{reportMonth}}\"\n}"
+            },
+            "url": "{{reporting}}/api/v1/reports/monthly"
+          }
+        },
+        {
+          "name": "8.4 List Tenant Reports",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Reports listed (200)', () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json();",
+                  "if (!pm.collectionVariables.get('reportId') && list.length > 0) {",
+                  "  pm.collectionVariables.set('reportId', list[0].id);",
+                  "  pm.collectionVariables.set('reportDownloadUrl', list[0].downloadUrl);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{reporting}}/api/v1/reports"
+          }
+        },
+        {
+          "name": "8.5 Get Report by ID (Fresh 15-min RustFS Link)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Report fetched (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('reportDownloadUrl', pm.response.json().downloadUrl);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{reporting}}/api/v1/reports/{{reportId}}"
+          }
+        },
+        {
+          "name": "8.6 Download Monthly PDF from RustFS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('PDF downloaded from RustFS (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{reportDownloadUrl}}"
+          }
+        },
+        {
+          "name": "8.7 Negative Test: TR User Reads EU Report -> 404",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cross-tenant report refused (404)', () => pm.response.to.have.status(404));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{trToken}}" }
+            ],
+            "url": "{{reporting}}/api/v1/reports/{{reportId}}"
+          }
+        },
+        {
+          "name": "8.8 Verify Delivered Email in Mailpit Inbox",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Mailpit inbox reachable (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{mailpit}}/api/v1/messages"
           }
         }
       ]
