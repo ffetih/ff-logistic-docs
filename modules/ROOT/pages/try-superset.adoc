@@ -1,0 +1,121 @@
+= Try it: one tenant's months
+:description: S8 as numbered steps: Superset up, a guest token that names the caller's tenant, and the monthly chart showing that tenant's rows only.
+
+Superset reads `tenant_delivery_monthly` as `analytics_reader` (xref:try-analytics.adoc#reader[the same role]). Identity signs a guest token for the caller's tenant and one dashboard. The connection runs `SET app.tenant_id` from that token before the chart's SQL. The chart's own statement cannot name the tenant.
+
+The answers shown are from the first run, on 2026-11-22, after the sync of `acff62d`. The month is the one the loader recounted after the load runs: xref:try-analytics.adoc#monthly[the analytics page] recorded 5 shipments on 2026-11-21; this chart sees 7409.
+
+[[up]]
+== 1. Superset is up
+
+`ff-root` creates the Application. The workload is synced by hand. A change to the files changes the ConfigMap's name, so the sync prunes the previous one.
+
+[source,bash]
+----
+argocd app sync superset --prune && argocd app wait superset --health --timeout 300
+curl -s -o /dev/null -w "%{http_code}\n" localhost:8088/health
+kubectl -n ff-logistics logs deploy/superset -c init | grep '^provision:'
+----
+
+✅ Healthy, the host port answers, and init imported the files:
+
+----
+200
+provision: imported 4 files from /app/pythonpath/assets
+provision: role TenantEmbedViewer with 11 permissions
+provision: 'Deliveries per month' embedded as d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349
+----
+
+The embedded id is what a guest token names. The dashboard's slug is `monthly`; a token that carries the slug does not open the chart (step 3).
+
+[[token]]
+== 2. A guest token names the caller's tenant
+
+`nexus.planner` is `ff-eu-freight`. `geodispatch.operator` is `ff-tr-distribution`. Both are planners. The body may name a tenant; it has to be the caller's.
+
+[source,bash]
+----
+EU_ACCESS=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"nexus.planner","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+TR_ACCESS=$(curl -s -H 'Content-Type: application/json' \
+  -d '{"username":"geodispatch.operator","password":"fflogistics2026"}' localhost:8085/sessions | jq -r .accessToken)
+EMBED=d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349
+curl -s -w "\nHTTP %{http_code}\n" -H "Authorization: Bearer $EU_ACCESS" -H 'Content-Type: application/json' \
+  -d '{"dashboardId":"'"$EMBED"'","tenantId":"ff-tr-distribution"}' localhost:8085/api/v1/guest-tokens
+echo
+EU=$(curl -s -H "Authorization: Bearer $EU_ACCESS" -H 'Content-Type: application/json' \
+  -d '{"dashboardId":"'"$EMBED"'"}' localhost:8085/api/v1/guest-tokens)
+TR=$(curl -s -H "Authorization: Bearer $TR_ACCESS" -H 'Content-Type: application/json' \
+  -d '{"dashboardId":"'"$EMBED"'"}' localhost:8085/api/v1/guest-tokens)
+echo "$EU" | jq '{tenantId, dashboardId}'
+echo "$TR" | jq '{tenantId, dashboardId}'
+----
+
+✅ The other tenant is refused. Each token carries the caller's tenant:
+
+----
+{"detail":"Guest token tenant must be the caller's tenant","instance":"/api/v1/guest-tokens","status":403,"title":"Forbidden"}
+HTTP 403
+
+{
+  "tenantId": "ff-eu-freight",
+  "dashboardId": "d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349"
+}
+{
+  "tenantId": "ff-tr-distribution",
+  "dashboardId": "d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349"
+}
+----
+
+The token lasts five minutes. `EU` and `TR` hold the whole response; step 3 reads `.token`.
+
+[[chart]]
+== 3. The chart, and the other tenant
+
+The three ids are the ones this first import stored: dataset 1, chart 1, dashboard 1. Superset returns the month as epoch milliseconds. Run this in the same terminal as step 2.
+
+[source,bash]
+----
+BODY='{"datasource":{"id":1,"type":"table"},"force":true,"queries":[{"columns":[{"columnType":"BASE_AXIS","sqlExpression":"delivery_month","label":"delivery_month","expressionType":"SQL","timeGrain":"P1M"}],"metrics":["delivered_shipments"],"orderby":[["delivered_shipments",false]],"row_limit":100}],"result_format":"json","result_type":"full","form_data":{"slice_id":1,"dashboardId":1,"viz_type":"echarts_timeseries_bar"}}'
+echo "EU"
+curl -s -H "X-GuestToken: $(echo "$EU" | jq -r .token)" -H 'Content-Type: application/json' \
+  localhost:8088/api/v1/chart/data -d "$BODY" | jq '.result[0].data'
+echo "TR"
+curl -s -H "X-GuestToken: $(echo "$TR" | jq -r .token)" -H 'Content-Type: application/json' \
+  localhost:8088/api/v1/chart/data -d "$BODY" | jq '.result[0].data'
+----
+
+✅ `ff-eu-freight` sees its month. `ff-tr-distribution` sees no row:
+
+----
+EU
+[
+  {
+    "delivery_month": 1793491200000.0,
+    "delivered_shipments": 7409
+  }
+]
+TR
+[]
+----
+
+`1793491200000.0` is `2026-11-01 00:00 UTC`. The table's row that day is `ff-eu-freight`, `delivered_shipments` 7409. There is no row for `ff-tr-distribution`; the empty chart is that tenant's session seeing none of the EU row. The same chart opened in Superset as admin is empty too: admin is not a guest, so the connection never sets `app.tenant_id`.
+
+A token whose dashboard id is the slug is signed, and the chart refuses it:
+
+[source,bash]
+----
+SLUG=$(curl -s -H "Authorization: Bearer $EU_ACCESS" -H 'Content-Type: application/json' \
+  -d '{"dashboardId":"monthly"}' localhost:8085/api/v1/guest-tokens)
+curl -s -w "\nHTTP %{http_code}\n" -H "X-GuestToken: $(echo "$SLUG" | jq -r .token)" -H 'Content-Type: application/json' \
+  localhost:8088/api/v1/chart/data -d "$BODY" | { read -r body; read -r code; echo "$body" | jq '.errors[0].message'; echo "$code"; }
+----
+
+✅
+
+----
+"This endpoint requires the datasource 1, database or `all_datasource_access` permission"
+HTTP 403
+----
+
+`set_config` stays refused for this role (xref:try-analytics.adoc#reader[step 3 of the analytics page]). The chart does not set the tenant. The connection does, from the token, before the statement runs.

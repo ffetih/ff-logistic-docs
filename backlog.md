@@ -273,20 +273,25 @@ Goal: Superset shows one tenant's months, and a guest token is what names the te
 
 The reader role sees a row only after `SET app.tenant_id`. Superset's own row filter is a `WHERE`, and this policy does not read one. `set_config` is revoked, so a chart cannot set the tenant itself.
 
-- [ ] **S08-01 Run Superset** · runtime
+- [x] **S08-01 Run Superset** · runtime
   The Application, from `deploy/platform/superset`. The host port `8088` is already mapped to `30088`. Its metadata database is created on the same PostgreSQL, and it connects to `ff_logistics_analytics` as `analytics_reader`.
   Done when: `http://localhost:8088` answers and the pod is Healthy.
-- [ ] **S08-02 Set the reader's tenant from the guest token** · runtime
+  `http://localhost:8088/health` was 200, and the Application was Healthy, synced to `acff62d` (2026-11-22).
+- [x] **S08-02 Set the reader's tenant from the guest token** · runtime
   Before a chart's SQL, the connection runs `SET app.tenant_id` for the tenant the guest token names. The chart's statement cannot.
   Done when: `ff-eu-freight` sees its rows in `tenant_delivery_monthly`, another tenant sees none of them, and a statement that calls `set_config` is refused.
-- [ ] **S08-03 Sign the guest token in identity** · shared
+  On that run the EU chart returned its November row and the TR chart returned none. `set_config` stays refused for the reader (the analytics page).
+- [x] **S08-03 Sign the guest token in identity** · shared
   A signed-in caller asks identity. The token names that caller's tenant and one dashboard. The signing secret stays in identity and in Superset.
   Done when: a planner's access token exchanges for a guest token of the planner's tenant, and a body that names another tenant is refused.
-- [ ] **S08-04 Import the monthly dashboard from files** · runtime
+  Both planners exchanged. A body naming the other tenant was 403, `Guest token tenant must be the caller's tenant`.
+- [x] **S08-04 Import the monthly dashboard from files** · runtime
   One dashboard, deliveries per month, loaded when Superset starts. The files live next to the Application. The reference's `infra/local/superset/assets` was never written. The table is `tenant_delivery_monthly`.
   Done when: a fresh sync has the dashboard, and its figures are that table's for the token's tenant.
-- [ ] **S08-05 Write the first run** · docs
+  The sync of `acff62d` imported `Deliveries per month`. The chart's 7409 is that table's `delivered_shipments` for `2026-11-01`.
+- [x] **S08-05 Write the first run** · docs
   Superset up, one tenant's months on the dashboard, the other tenant absent.
+  The first run is in `try-superset` (2026-11-22).
 
 ## S9–S13 — Built once, against the edge
 

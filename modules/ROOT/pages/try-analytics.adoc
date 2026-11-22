@@ -74,7 +74,7 @@ The cut is between 12:38 and 12:46 on 2026-11-20: S4's switch from the modulith 
 [[reader]]
 == 3. The data as a dashboard sees it
 
-Dashboards (S8) connect as `analytics_reader`, which row-level security restricts to the tenant its session names.
+The monthly dashboard connects as `analytics_reader`, which row-level security restricts to the tenant its session names (xref:try-superset.adoc[that chart]).
 
 [source,bash]
 ----

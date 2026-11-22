@@ -393,7 +393,7 @@ image::argocd/keycloak.png[keycloak: a ConfigMap with a hash suffix, two Secrets
 image::argocd/postgres.png[postgres: a volume claim, two Secrets, a Service, a Deployment]
 
 * *`postgres-data`*, the volume claim, has a tick: Argo CD manages it, but with `Prune=false,Delete=false`, so neither a pruning sync nor deleting the Application removes the data.
-* *Two Secrets*: the applications' credentials, and the analytics database reader's, waiting for S8 (local example values, committed on purpose so a fresh cluster needs no manual step).
+* *Two Secrets*: the applications' credentials, and the analytics database reader's, which Superset connects as (local example values, committed on purpose so a fresh cluster needs no manual step).
 
 image::argocd/rustfs.png[rustfs: chart 1.0.6, its ConfigMap, volume claim, Secret, Service, ServiceAccount, Deployment]
 
