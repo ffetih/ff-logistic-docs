@@ -246,4 +246,4 @@ From the moment the broker was gone, arrivals stayed with the deliveries: flow 2
 * *Flow 1 is the request that moves.* Booking a road leg asks routing. A method call against an HTTP call is the whole of the difference in `plan`. The writes, and the direct distance call, are already short on both sides.
 * *Flow 2 is where a minute without Kafka is felt.* On the services the dock learns late. On the modulith the dock learns in-process, and only analytics, which crosses Kafka on both sides, waits.
 * *Memory is paid at rest, and the modulith pays for fewer processes.* Load added CPU on both. The services added almost no memory. The modulith added some, and stayed the smaller set.
-* *These are two runs of five users, one minute of Kafka, not a capacity test.* The one-second pause sets the rate. Startup time, a database that is away, and a stopped area are not in these files.
+* *These are two runs of five users, one minute of Kafka, not a capacity test.* The one-second pause sets the rate. The same users with the database away, on the modulith, are recorded separately (xref:try-database.adoc[that run]). Startup time and a stopped area are not in these files.
