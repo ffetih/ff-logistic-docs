@@ -28,6 +28,7 @@ flowchart LR
 | xref:decisions.adoc[Decisions] | Why it is built this way, and what each choice costs
 | xref:plan.adoc[Plan] | The sprints, and where the work stands
 | xref:glossary.adoc[Glossary] | The terms used throughout
+| xref:comparison.adoc[Comparison] | Five runs of the same load: latency, pods, and a stopped Kafka, database or routing service
 |===
 
 The code is in six repositories under https://github.com/ffetih[github.com/ffetih], all named `ff-logistic-*`.
