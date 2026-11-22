@@ -1,7 +1,7 @@
 = Try it: the console
 :description: S9 as numbered steps: one origin on 8090, sign-in through identity, and the monthly chart embedded for the caller's tenant.
 
-The console is one origin, `http://localhost:8090`. nginx sends `/identity` to identity and `/api` to the edge. The report page asks identity for a guest token and opens the monthly dashboard in an iframe. The figure is the one already on xref:try-superset.adoc#chart[the Superset page]: `ff-eu-freight`, November 2026, 7409.
+The console is one origin, `http://localhost:8090`. nginx sends `/identity` to identity and `/api` to the edge. The report page asks identity for a guest token and opens the monthly dashboard in an iframe. The figure is the one already on xref:try-superset.adoc#chart[the Superset page]: `ff-eu-freight`, November 2026, 7409. The same origin then received a pallet, delivered the shipment that carried it, and planned a route.
 
 The answers shown are from the first run, on 2026-11-22. The console was synced to `394f8b0`. Superset was synced to `dc56530`, which is the commit that allows this origin to embed the dashboard.
 
@@ -39,4 +39,29 @@ Rapor, then *Gömülü BI panosu*. The page posts `/identity/api/v1/guest-tokens
 
 ✅ The frame title was `Deliveries per month (ff-eu-freight)`. The bar is November 2026, the 7409 from xref:try-superset.adoc#chart[step 3 of the Superset page].
 
-Depo, Sevkiyat and Rota call the edge on this same origin, with the bodies in the walkthrough collection (xref:walkthrough.adoc#collection[the collection]). This run opened the report.
+Depo, Sevkiyat and Rota call the edge on this same origin, with the bodies in the walkthrough collection (xref:walkthrough.adoc#collection[the collection]).
+
+[[warehouse]]
+== 4. A pallet on the rack
+
+Depo. `IST-HDK` and rack `A-01-01` were already there. *ASN aç* created `ASN-2026-1795345906156` for Anatolia Textiles, GTIN `8690001100018`, 120 units, expected 2026-11-25. *Paleti kabul et* put 60 of those units, 180.5 kg, on `A-01-01`.
+
+✅ The page showed SSCC `086900010001000034` and *rafa kondu*. The ASN moved to `RECEIVING`, 60/120.
+
+[[shipment]]
+== 5. That pallet, delivered
+
+*Bu paletle sevkiyat aç* opened Sevkiyat with that SSCC. The form's one leg has to start where the shipment starts and end where it ends. The defaults were `Cologne Eifeltor Terminal` and `Trieste`, and the edge refused them. This run set the leg to `Cologne Eifeltor` and `Istanbul Hadimkoy`, rail, 1050 km, 18000 kg, DAP, equipment `CSQU3054383`, destination GLN `8690001000011`.
+
+✅ `SHP-17418` planned. *Teslim al*, *Yola çık*, then *Teslim et* with `Dock 2, A. Yilmaz`. The row ended `Teslim edildi`. CO₂e saved 756 kg, 64.5 percent.
+
+[[route]]
+== 6. A route, then the two documents
+
+Rota. Territory `IST-EU` was already there. *Sırala* used plate `34 FF 0418`, depot 41.10, 28.65, and the two stops on the form, `IST-ESN` and `IST-KDK`.
+
+✅ `RTE-5008`: 47.7 km, 102 minutes, 600 kg, 17.1 percent full. Esenyurt first (9.9 km, arrival 15 minutes), Kadikoy second (37.9 km, arrival 87 minutes). *Durağı tamamla* on `IST-ESN` with `Dock 2, Route Driver` left that stop `COMPLETED`.
+
+The file buttons ask the edge for a link and then talk to RustFS at `localhost:9000`. The bucket `ff-documents` allows origin `http://localhost:8090` (and `http://localhost:5173`) for `GET`, `PUT` and `HEAD`. Before that rule the page said `Depolama sunucusuna ulaşılamadı`: the preflight came back without `access-control-allow-origin`.
+
+✅ After the rule, *e-POD yükle* stored `epod.png` at `ff-eu-freight/epod/rte-5008-ist-esn/signature.png`, and *e-POD indir* opened it. On `SHP-17418`, *e-CMR yükle* stored `ecmr.pdf` at `ff-eu-freight/ecmr/shp-17418/ecmr.pdf`, and *e-CMR indir* opened it.

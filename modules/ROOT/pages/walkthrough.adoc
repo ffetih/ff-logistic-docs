@@ -394,7 +394,7 @@ The steps: xref:try-superset.adoc[Try it: one tenant's months].
 [[s9]]
 == S9: the console
 
-What exists: one origin on 8090. Sign-in goes to identity. Warehouse, shipment and route pages call the edge. The report page embeds the monthly dashboard with the guest token identity already signs. What it showed, on 2026-11-22: `nexus.planner` signed in, and the frame was `ff-eu-freight`'s November.
+What exists: one origin on 8090. Sign-in goes to identity. Warehouse, shipment and route pages call the edge. The report page embeds the monthly dashboard with the guest token identity already signs. What it showed, on 2026-11-22: `nexus.planner` signed in, the frame was `ff-eu-freight`'s November, and the three pages took pallet `086900010001000034` through `SHP-17418` to `RTE-5008`.
 
 The steps: xref:try-console.adoc[Try it: the console].
 
