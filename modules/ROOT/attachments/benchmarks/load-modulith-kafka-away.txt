@@ -1,0 +1,38 @@
+== load test: modulith side, 5 virtual users, 30s warm-up, 4m measured, 2026-11-22T04:50:20Z
+
+-- the modulith side at rest
+pod                                                cpu m    mem Mi
+logistics-app-8474d4d4c4-7cfwx                         6       367
+logistics-app-8474d4d4c4-chkjq                         4       359
+logistics-app-8474d4d4c4-m4ss7                        10       364
+logistics-app-8474d4d4c4-sgm5v                         4       359
+total                                                 24      1449
+
+-- k6
+side: modulith  vus: 5  warm-up: 30s  measured: 4m
+iterations: 1130  (4.71/s)  requests: 7915  (33.0/s)  failed: 0.00%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    36.0    47.7    49.8    50.3
+plan          1130    0.0%    12.7    30.1    46.0    72.2
+shipment      1130    0.0%     3.9    10.4    18.5    28.8
+pickup        1130    0.0%    11.1    21.9    32.1    64.8
+departure     1130    0.0%    11.4    21.7    24.3    68.1
+deliver       1130    0.0%    12.2    21.6    25.0    62.6
+warehouses    1130    0.0%     3.6     6.4     9.1    11.0
+distance      1130    0.0%     1.8     3.5     4.9    13.1
+
+-- the modulith side under load (highest sample per pod)
+pod                                                cpu m    mem Mi
+logistics-app-8474d4d4c4-7cfwx                       273       464
+logistics-app-8474d4d4c4-chkjq                       268       466
+logistics-app-8474d4d4c4-m4ss7                       240       462
+logistics-app-8474d4d4c4-sgm5v                       263       443
+total                                               1044      1835
+
+-- the shared platform under load (highest sample per pod)
+pod                                                cpu m    mem Mi
+analytics-loader-5fdc5c8fbc-6ktqv                     38       255
+identity-6b5dd7cb6f-hvlfq                              5       297
+kafka-0                                              832       411
+postgres-986699bff-7xhsj                              80       172
+total                                                955      1135

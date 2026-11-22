@@ -1,0 +1,45 @@
+== load test: services side, 5 virtual users, 30s warm-up, 4m measured, 2026-11-22T05:32:21Z
+
+-- the services side at rest
+pod                                                cpu m    mem Mi
+gateway-bf5c588b-wkb6l                                 1        15
+routing-85b974b5c5-bjvfk                               2       347
+routing-85b974b5c5-l6hkv                               3       341
+transportation-5784dfd798-775kc                       11       424
+transportation-5784dfd798-sh2f4                       12       427
+warehousing-58b9865f79-lx5sl                           7       370
+warehousing-58b9865f79-z2bgl                          11       372
+total                                                 47      2296
+
+-- k6
+side: services  vus: 5  warm-up: 30s  measured: 4m
+iterations: 928  (3.87/s)  requests: 6501  (27.1/s)  failed: 1.11%
+request      count  failed  med ms  p95 ms  p99 ms  max ms
+sign-in          5    0.0%    56.9    64.9    65.7    65.9
+plan           928    0.0%    21.6  1014.1  1022.0  1036.7
+shipment       928    0.0%     3.2    11.6    17.3    21.4
+pickup         928    0.0%     8.4    20.4    26.7    32.7
+departure      928    0.0%     8.5    17.4    22.4    27.8
+deliver        928    0.0%     9.3    17.5    22.5    62.3
+warehouses     928    0.0%     3.6     7.1     9.7    14.2
+distance       928    7.8%     3.4  2001.3  2003.1  2004.2
+time="2026-11-22T05:36:56Z" level=error msg="thresholds on metrics 'http_req_failed{scenario:measured}' have been crossed"
+
+-- the services side under load (highest sample per pod)
+pod                                                cpu m    mem Mi
+gateway-bf5c588b-wkb6l                                15        19
+routing-85b974b5c5-7h5tw                             921       344
+routing-85b974b5c5-thqkk                             916       346
+transportation-5784dfd798-775kc                      164       437
+transportation-5784dfd798-sh2f4                      133       434
+warehousing-58b9865f79-lx5sl                          40       372
+warehousing-58b9865f79-z2bgl                          43       378
+total                                               2232      2330
+
+-- the shared platform under load (highest sample per pod)
+pod                                                cpu m    mem Mi
+analytics-loader-5fdc5c8fbc-6ktqv                     14       257
+identity-6b5dd7cb6f-hvlfq                              6       309
+kafka-0                                               42       430
+postgres-986699bff-vhm82                              65       175
+total                                                127      1171
