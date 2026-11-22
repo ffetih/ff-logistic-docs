@@ -319,6 +319,11 @@ The pages follow the Postman collection and the HTTP Client file in this reposit
   Done when: the page serves those ends, and a new pod restores the browser rule after it has been removed.
   The console on 8090 serves `Cologne Eifeltor` and `Istanbul Hadimkoy` (`ee3a0b5`). `logistics-app` `2b6cccd`, synced and Healthy, logged the two origins and the preflight returned `access-control-allow-origin: http://localhost:8090` (2026-11-22). Routing and transportation images are `bb64b28`, for the other side of the switch.
 
+- [x] **S09-06 Add distance and CO2e to the monthly dashboard** · runtime, docs
+  Two bars on the dashboard the console already embeds: kilometres and CO2e saved, from columns the monthly table already had.
+  Done when: a guest of `ff-eu-freight` reads both charts, and the embedded id is the one the token already names.
+  The sync of `a4f28d6` imported 6 files. The embedded id stayed `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. The same guest query, 2026-11-22: November, 88067.350 km and 7772.400 kg. Shipments that day had moved to 7412.
+
 ## S10–S13 — Built once, against the edge
 
 Outline; each sprint is detailed when it starts. They talk to the edge and the topics, so they do not care which side is active.
