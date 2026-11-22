@@ -261,6 +261,7 @@ Goal: numbers instead of opinions.
 - [ ] **S07-04 Count the cost of a change** · docs
   Three real changes (a new field, a new rule in one area, a new flow between areas): files, repositories, pull requests, deployments, on each side.
 - [ ] **S07-05 Write the comparison guide** · docs
+  The five runs are side by side in `comparison` (2026-11-22). Startup, a slow area, and the cost of a change are not in it.
 - [ ] **S07-06 Ship a sprint with one workflow** · runtime
   The `ship` chain as a workflow in runtime (a release train): started with a branch name, it merges each repository's pull request in the build order and waits for its run. Needs a token that may act on the other repositories. Optional.
 

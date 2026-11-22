@@ -1,0 +1,125 @@
+= Comparison
+:description: The five load runs side by side: what the caller saw, what the pods cost, and what waited when Kafka, PostgreSQL or routing was stopped.
+
+Five runs of the same script. Five virtual users, 30 seconds of warm-up, four minutes measured, against the edge. Each iteration plans a shipment, picks it up, departs, delivers it, then reads the warehouses and a road distance, and waits one second. The lab notes keep the full lines: xref:try-load.adoc[Kafka away], xref:try-database.adoc[the database away], xref:try-routing-away.adoc[routing away]. This page puts the figures that differ next to each other.
+
+The Kafka pair is the clean load. Nothing failed, and no workload pod was restarting. The database runs and the routing run include users waiting, and a process coming back. Their CPU is not the cost of five users.
+
+[[caller]]
+== What the caller saw
+
+`plan` is flow 1. On the modulith it is a method call. On the services it is HTTP to routing, then the insert. Times are milliseconds.
+
+[cols="3,2,2,2,2",options="header"]
+|===
+| Run | Iterations | Failed | `plan` median / p95 | `plan` max
+
+| Services, Kafka away, 2026-11-21
+| 1125 (4.69/s)
+| 0 %
+| 20.1 / 44.5
+| 134.8
+
+| Modulith, Kafka away, 2026-11-22
+| 1130 (4.71/s)
+| 0 %
+| 12.7 / 30.1
+| 72.2
+
+| Modulith, database away, 2026-11-22
+| 877 (3.65/s)
+| 0.08 %
+| 12.2 / 34.4
+| 30032.5
+
+| Services, database away, 2026-11-22
+| 847 (3.53/s)
+| 0.08 %
+| 23.9 / 52.4
+| 30002.5
+
+| Services, routing away, 2026-11-22
+| 928 (3.87/s)
+| 1.11 %
+| 21.6 / 1014.1
+| 1036.7
+|===
+
+On the two clean runs the rate is the same, 4.69 and 4.71 iterations a second, because the one-second pause sets it. `plan` is the request that moves: median 12.7 ms against 20.1, p95 30.1 against 44.5. The three writes sit together on both sides, around 10 to 12 ms at the median. A direct distance call, the same two points and no shipment, is the fastest line on both (1.8 ms on the modulith, 2.3 on the services).
+
+The database runs keep that `plan` gap for the plans that got a connection (12.2 against 23.9 at the median). Five plans on each side waited and gave up at 30.0 s. Those five iterations stopped there. Every request after a successful plan succeeded. The rate fell to 3.65 and 3.53, which is five users held for about half a minute.
+
+With routing stopped, no plan failed. The median stayed 21.6 ms. The p95 is 1.01 s: transportation waited its 1 s connect timeout and the core booked the straight-line estimate. The scenario's own distance call has no estimate. 7.8 % of them waited the gateway's 2 s and failed, and that is the whole of the 1.11 %. A failed distance does not stop the iteration, so the deliveries were still sent. k6's bar for the scenario is under 1 % failed. This run crossed it.
+
+[[pods]]
+== What the pods cost
+
+CPU is millicores. These two rows are the clean load, sampled before the users and at the highest sample while they ran.
+
+[cols="3,2,2,2,2",options="header"]
+|===
+| | Pods | At rest | Under load | Memory added
+
+| Modulith, 2026-11-22
+| 4
+| 24 millicores, 1449 MiB
+| 1044 millicores, 1835 MiB
+| 386 MiB
+
+| Services, 2026-11-21
+| 7
+| 27 millicores, 2413 MiB
+| 598 millicores, 2483 MiB
+| 70 MiB
+|===
+
+Memory is paid at rest. Four `logistics-app` pods held 1449 MiB with nobody calling. Seven service pods held 2413. Under the same users the modulith's CPU rose to 1044, because the work the services spread across transportation, warehousing, routing and the gateway sits in those four processes. On the services, transportation took 379 of the 598.
+
+The modulith did not give that memory back. At the start of its database run the same four pods held 1847 MiB, against 1835 under the Kafka load. The services side's rest figure moves with the age of the pods: 2413 MiB on the Kafka run, 1926 MiB a few minutes after the switch back, 2296 MiB before routing was stopped. Under the database load the services reached 2262 MiB, and transportation was 683 of 982 millicores. Under the routing load the highest sample is 2232 millicores, and almost all of it is the two routing pods the drill had just started (921 and 916). That sample caught them starting.
+
+The platform is shared. On the clean runs Kafka used 584 millicores while the services ran, and 832 while the modulith ran. The modulith window includes the broker draining a full outbox, so 832 is that peak. When the database or routing was the thing stopped, Kafka stayed at 60 and 52 millicores: there was no backlog. Identity stayed at 5 or 6 millicores on the two clean runs. The applications check tokens locally, and five sign-ins are its work.
+
+[[away]]
+== What a stopped dependency did
+
+Caught up means arrivals and analytics within three of the deliveries, and no more than three events left in the outbox.
+
+[cols="2,3,3,3",options="header"]
+|===
+| | Kafka away, 60 s | Database away | Routing away, 60 s
+
+| Services, caller
+| 0 % failed
+| 5 plans gave up at 30.0 s
+| distance 7.8 % failed at 2 s; every plan returned
+
+| Modulith, caller
+| 0 % failed
+| 5 plans gave up at 30.0 s
+| no routing process to stop
+
+| What waited
+| services: arrivals and analytics, caught up 412 s after the broker was back. modulith: arrivals stayed with the deliveries; analytics caught up 231 s after
+| both sides: the first readable sample was already caught up, 7 s and 6 s after the scale-up, outbox empty
+| services: deliveries, arrivals and analytics stayed together, outbox 0 on every line, caught up 1 s after the scale-up
+
+| Lost
+| nothing. 1225 and 1200, each count level, outbox empty
+| the five plans that gave up. they committed nothing
+| the distance calls that hit the gateway timeout. the deliveries went through
+|===
+
+Flow 2 is where a minute without Kafka is felt. On the services the arrival is a consumer, so the dock learned late and the outbox held about three rows per delivery until the broker accepted them. On the modulith the arrival is a call in the same process, after the commit, so the dock did not wait. Analytics crosses Kafka on both sides, and it waited on both. The 412 seconds and the 231 seconds are a backlog of about a thousand events, emptied on the upkeep's pause, not the minute itself.
+
+Stopping PostgreSQL looks the same from both sides. The event is written in the delivery's transaction, so a delivery that cannot commit leaves no outbox row for Kafka to hold. Flow 2 crossing Kafka on the services added no queue. The drill was asked for 30 s. On both sides one `kubectl exec` blocked while the pod was gone, and the recorded gap was about a minute.
+
+Stopping routing stops neither the database nor Kafka. A booked leg does not ask routing again to be picked up and delivered. The plan has a fallback. The direct distance call does not.
+
+[[open]]
+== What these runs leave open
+
+* *This is a desk, not a capacity test.* Five users, and a one-second pause. The rate on the clean runs is that pause.
+* *Startup to ready is not measured.* Deleting the pods and timing until they answer is still open.
+* *A slow area is not measured.* The drill stops Kafka, PostgreSQL or the routing service. It has no mode that answers slowly.
+* *The cost of a change is not in these files.* A new field, a new rule in one area, and a new flow between areas are counted from the history, when that count is made.
+* *Two CPU samples are not the clean load.* The routing run's 2232 millicores is two new pods starting. The database runs' CPU is lower because the users spent part of the four minutes waiting.
