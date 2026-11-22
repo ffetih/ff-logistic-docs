@@ -1,0 +1,983 @@
+{
+  "info": {
+    "name": "FF Logistic — E2E Walkthrough (S1-S8)",
+    "description": "FF Logistic uçtan uca API akışı (S1 -> S8): Identity, Warehousing (WMS), Transportation (TMS + Flow 1 & Flow 2), Routing (GEO + Flow 3), RustFS Documents (e-CMR / e-POD) ve Superset Multi-Tenant RLS.\n\nHem Modulith hem Services tarafında birebir aynı URL'lerle (edge :8081) çalışır. İstekleri sırayla çalıştırın; tüm token ve ID'ler otomatik olarak collection variable'larına kaydedilir.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "edge", "value": "http://localhost:8081" },
+    { "key": "identity", "value": "http://localhost:8085" },
+    { "key": "analytics", "value": "http://localhost:8086" },
+    { "key": "superset", "value": "http://localhost:8088" },
+    { "key": "euUser", "value": "nexus.planner" },
+    { "key": "trUser", "value": "geodispatch.operator" },
+    { "key": "password", "value": "fflogistics2026" },
+    { "key": "dashboardId", "value": "d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349" },
+    { "key": "euToken", "value": "" },
+    { "key": "trToken", "value": "" },
+    { "key": "warehouseId", "value": "" },
+    { "key": "asnId", "value": "" },
+    { "key": "shipmentId", "value": "" },
+    { "key": "shipmentNumber", "value": "" },
+    { "key": "flowShipmentId", "value": "" },
+    { "key": "flowShipmentNumber", "value": "" },
+    { "key": "routeId", "value": "" },
+    { "key": "ecmrUploadUrl", "value": "" },
+    { "key": "ecmrDownloadUrl", "value": "" },
+    { "key": "epodUploadUrl", "value": "" },
+    { "key": "epodDownloadUrl", "value": "" },
+    { "key": "euGuestToken", "value": "" },
+    { "key": "trGuestToken", "value": "" },
+    { "key": "trShipmentId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "0. Health & Active Side",
+      "description": "Edge, aktif implementasyon (Modulith 200 vs Services Gateway 404), Analytics Loader ve Superset sağlık kontrolleri.",
+      "item": [
+        {
+          "name": "0.1 Edge Readiness",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Edge ready (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{edge}}/actuator/health/readiness"
+          }
+        },
+        {
+          "name": "0.2 Which Side? (Modulith=200, Services=404)",
+          "request": {
+            "method": "GET",
+            "url": "{{edge}}/actuator/info"
+          }
+        },
+        {
+          "name": "0.3 Analytics Loader Health",
+          "request": {
+            "method": "GET",
+            "url": "{{analytics}}/actuator/health"
+          }
+        },
+        {
+          "name": "0.4 Superset Health",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Superset healthy (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "url": "{{superset}}/health"
+          }
+        }
+      ]
+    },
+    {
+      "name": "1. Identity (Auth — EU & TR)",
+      "description": "Keycloak üzerinden iki ayrı tenant için JWT access token alır (5 dk geçerli).",
+      "item": [
+        {
+          "name": "1.1 EU Login (ff-eu-freight — nexus.planner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('EU login 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('euToken', body.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{euUser}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{identity}}/sessions"
+          }
+        },
+        {
+          "name": "1.2 TR Login (ff-tr-distribution — geodispatch.operator)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('TR login 200', () => pm.response.to.have.status(200));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('trToken', body.accessToken);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{trUser}}\",\n  \"password\": \"{{password}}\"\n}"
+            },
+            "url": "{{identity}}/sessions"
+          }
+        },
+        {
+          "name": "1.3 Who Am I (/api/v1/me)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('200 and tenant is ff-eu-freight', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().tenantId).to.eql('ff-eu-freight');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/me"
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Warehousing (WMS — S3)",
+      "description": "Depo (IST-HDK), raf (A-01-01), ASN ve GS1 SSCC etiketli palet kabulü. DB: ff_logistics (wms_*).",
+      "item": [
+        {
+          "name": "2.1 Create Warehouse (IST-HDK, 201 or 409 if exists)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created (201) or already exists (409)', () => pm.expect([201, 409]).to.include(pm.response.code));",
+                  "if (pm.response.code === 201) {",
+                  "  pm.collectionVariables.set('warehouseId', pm.response.json().id);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"IST-HDK\",\n  \"name\": \"Istanbul Hadimkoy Hub\",\n  \"gln\": \"8690001000011\",\n  \"gs1CompanyPrefix\": \"8690001\",\n  \"countryCode\": \"TR\",\n  \"city\": \"Istanbul\",\n  \"latitude\": 41.1025,\n  \"longitude\": 28.6512,\n  \"palletCapacity\": 12000\n}"
+            },
+            "url": "{{edge}}/api/v1/wms/warehouses"
+          }
+        },
+        {
+          "name": "2.2 List Warehouses (Resolve IST-HDK ID)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Warehouses listed', () => pm.response.to.have.status(200));",
+                  "const list = pm.response.json();",
+                  "const wh = list.find(w => w.code === 'IST-HDK') || list[0];",
+                  "if (wh) pm.collectionVariables.set('warehouseId', wh.id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/wms/warehouses"
+          }
+        },
+        {
+          "name": "2.3 Create Bin (A-01-01, 201 or 409 if exists)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created (201) or already exists (409)', () => pm.expect([201, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"A-01-01\",\n  \"kind\": \"RACK\",\n  \"palletCapacity\": 4\n}"
+            },
+            "url": "{{edge}}/api/v1/wms/warehouses/{{warehouseId}}/bins"
+          }
+        },
+        {
+          "name": "2.4 Create ASN (Unique Timestamp)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ASN created (201)', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('asnId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"asnNumber\": \"ASN-2026-{{$timestamp}}\",\n  \"warehouseId\": \"{{warehouseId}}\",\n  \"supplierName\": \"Anatolia Textiles\",\n  \"expectedArrival\": \"2026-11-25\",\n  \"lines\": [\n    {\n      \"gtin\": \"8690001100018\",\n      \"skuCode\": \"TSHIRT-M-BLUE\",\n      \"quantity\": 120\n    }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/wms/asns"
+          }
+        },
+        {
+          "name": "2.5 Receive Pallet #1 (60 pcs — RECEIVING)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pallet received (201)', () => pm.response.to.have.status(201));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gtin\": \"8690001100018\",\n  \"quantity\": 60,\n  \"grossWeightKg\": 180.5,\n  \"binCode\": \"A-01-01\"\n}"
+            },
+            "url": "{{edge}}/api/v1/wms/asns/{{asnId}}/pallets"
+          }
+        },
+        {
+          "name": "2.6 Receive Pallet #2 (60 pcs — RECEIVED)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Pallet received and ASN complete', () => {",
+                  "  pm.response.to.have.status(201);",
+                  "  pm.expect(pm.response.json().asnStatus).to.eql('RECEIVED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gtin\": \"8690001100018\",\n  \"quantity\": 60,\n  \"grossWeightKg\": 180.5,\n  \"binCode\": \"A-01-01\"\n}"
+            },
+            "url": "{{edge}}/api/v1/wms/asns/{{asnId}}/pallets"
+          }
+        },
+        {
+          "name": "2.7 Get ASN Status",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/wms/asns/{{asnId}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. Transportation (TMS) + Flow 2 + Kafka + Analytics (S4 & S6)",
+      "description": "Multimodal sevkiyat planla ve teslim et. Outbox -> Kafka (ff.logistics.tms.shipment-delivered) -> WMS Inbound Arrival + Analytics Loader.",
+      "item": [
+        {
+          "name": "3.1 Plan Multimodal Shipment (Cologne -> Istanbul)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Shipment planned (201)', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('shipmentId', body.id);",
+                  "pm.collectionVariables.set('shipmentNumber', body.shipmentNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"consignorName\": \"Rhein Parts GmbH\",\n  \"consigneeName\": \"Istanbul Hadimkoy Hub\",\n  \"destinationGln\": \"8690001000011\",\n  \"equipmentCode\": \"CSQU3054383\",\n  \"sscc\": \"106141411234567897\",\n  \"incoterm\": \"DAP\",\n  \"origin\": \"Cologne Eifeltor\",\n  \"destination\": \"Istanbul Hadimkoy\",\n  \"grossWeightKg\": 18000,\n  \"legs\": [\n    { \"mode\": \"ROAD\", \"origin\": \"Cologne Eifeltor\", \"destination\": \"Cologne Eifeltor Terminal\", \"distanceKm\": 15, \"carrierReference\": \"DE-K-FF-210\" },\n    { \"mode\": \"RAIL\", \"origin\": \"Cologne Eifeltor Terminal\", \"destination\": \"Trieste\", \"distanceKm\": 1050, \"carrierReference\": \"TXL-41877\" },\n    { \"mode\": \"SEA_RORO\", \"origin\": \"Trieste\", \"destination\": \"Istanbul Pendik\", \"distanceKm\": 1450, \"carrierReference\": \"DFDS-PT-2611\" },\n    { \"mode\": \"ROAD\", \"origin\": \"Istanbul Pendik\", \"destination\": \"Istanbul Hadimkoy\", \"distanceKm\": 60, \"carrierReference\": \"TR-34-FF-0417\" }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/tms/shipments"
+          }
+        },
+        {
+          "name": "3.2 Pickup Shipment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{shipmentId}}/pickup"
+          }
+        },
+        {
+          "name": "3.3 Departure Shipment",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{shipmentId}}/departure"
+          }
+        },
+        {
+          "name": "3.4 Deliver Shipment (Triggers Flow 2 + Kafka + Analytics)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Delivered (200)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().status).to.eql('DELIVERED');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receivedBy\": \"Dock 2, A. Yilmaz\"\n}"
+            },
+            "url": "{{edge}}/api/v1/tms/shipments/{{shipmentId}}/delivery"
+          }
+        },
+        {
+          "name": "3.5 Check WMS Inbound Arrivals",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/wms/arrivals"
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Routing (GEO) + Flow 1 + Flow 3 (S5)",
+      "description": "Territory, Timefold zaman pencereli optimizasyon, Flow 1 (Transportation -> Routing mesafe sorgusu) ve Flow 3 (1 durak tamamlama ile Routing -> Transportation -> Warehousing + Analytics).",
+      "item": [
+        {
+          "name": "4.1 Create Territory (IST-EU, 201 or 409 if exists)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Created (201) or already exists (409)', () => pm.expect([201, 409]).to.include(pm.response.code));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"territoryCode\": \"IST-EU\",\n  \"name\": \"Istanbul Europe\",\n  \"hubGln\": \"8690001000011\",\n  \"centerLatitude\": 41.05,\n  \"centerLongitude\": 28.85,\n  \"coverageRadiusKm\": 35,\n  \"activePointCount\": 420,\n  \"weeklyVisitTarget\": 840\n}"
+            },
+            "url": "{{edge}}/api/v1/geo/territories"
+          }
+        },
+        {
+          "name": "4.2 Direct Distance Query (/api/v1/geo/distance)",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/geo/distance?fromLatitude=41.10&fromLongitude=28.65&toLatitude=41.03&toLongitude=28.67"
+          }
+        },
+        {
+          "name": "4.3 Plan Timefold Time-Window Route",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"territoryCode\": \"IST-EU\",\n  \"vehiclePlate\": \"34 FF 0418\",\n  \"depotLatitude\": 41.10,\n  \"depotLongitude\": 28.65,\n  \"vehicleCapacityKg\": 3500,\n  \"averageSpeedKmh\": 40,\n  \"stops\": [\n    { \"stopCode\": \"IST-ESN\", \"customerName\": \"Esenyurt Depot Shop\", \"latitude\": 41.03, \"longitude\": 28.67, \"demandWeightKg\": 200, \"serviceMinutes\": 15 },\n    { \"stopCode\": \"IST-KDK\", \"customerName\": \"Kadikoy Market\", \"latitude\": 40.99, \"longitude\": 29.03, \"demandWeightKg\": 400, \"serviceMinutes\": 15, \"readyMinutes\": 0, \"dueMinutes\": 70 }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/geo/routes"
+          }
+        },
+        {
+          "name": "4.4 Flow 1: Plan Road Shipment by Coordinates (ROUTING distance)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Flow 1 shipment planned (201)', () => pm.response.to.have.status(201));",
+                  "const body = pm.response.json();",
+                  "pm.collectionVariables.set('flowShipmentId', body.id);",
+                  "pm.collectionVariables.set('flowShipmentNumber', body.shipmentNumber);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"consignorName\": \"FF Hadimkoy\",\n  \"consigneeName\": \"Istanbul Hadimkoy Hub\",\n  \"destinationGln\": \"8690001000011\",\n  \"equipmentCode\": \"CSQU3054383\",\n  \"sscc\": \"106141411234567897\",\n  \"incoterm\": \"DAP\",\n  \"origin\": \"Hadimkoy Hub\",\n  \"destination\": \"Esenyurt\",\n  \"grossWeightKg\": 800,\n  \"legs\": [\n    {\n      \"mode\": \"ROAD\",\n      \"origin\": \"Hadimkoy Hub\",\n      \"destination\": \"Esenyurt\",\n      \"originLatitude\": 41.10,\n      \"originLongitude\": 28.65,\n      \"destinationLatitude\": 41.03,\n      \"destinationLongitude\": 28.67,\n      \"carrierReference\": \"TR-34-FF-0417\"\n    }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/tms/shipments"
+          }
+        },
+        {
+          "name": "4.5 Plan Route Carrying That Shipment",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Route planned (201)', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('routeId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"territoryCode\": \"IST-EU\",\n  \"vehiclePlate\": \"34 FF 0417\",\n  \"depotLatitude\": 41.10,\n  \"depotLongitude\": 28.65,\n  \"vehicleCapacityKg\": 3500,\n  \"averageSpeedKmh\": 40,\n  \"stops\": [\n    {\n      \"stopCode\": \"IST-HDK\",\n      \"customerName\": \"FF Hadimkoy Warehouse\",\n      \"latitude\": 41.10,\n      \"longitude\": 28.66,\n      \"demandWeightKg\": 800,\n      \"serviceMinutes\": 15,\n      \"shipmentNumber\": \"{{flowShipmentNumber}}\"\n    }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/geo/routes"
+          }
+        },
+        {
+          "name": "4.6 Flow 3: Complete Stop (3 Areas + Analytics in One Call)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Stop completed (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receivedBy\": \"Dock 2, Route Driver\"\n}"
+            },
+            "url": "{{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/completion"
+          }
+        },
+        {
+          "name": "4.7 Verify Shipment Became DELIVERED",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{flowShipmentId}}"
+          }
+        },
+        {
+          "name": "4.8 Verify WMS Inbound Arrival Opened",
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/wms/arrivals"
+          }
+        }
+      ]
+    },
+    {
+      "name": "5. Documents (RustFS Presigned Write-Once — S5-05)",
+      "description": "e-CMR (Transportation) ve e-POD (Routing) dosyalarını presigned URL ile doğrudan RustFS'e (localhost:9000) yükler ve write-once kuralını test eder.",
+      "item": [
+        {
+          "name": "5.1 Request e-CMR Upload Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-CMR upload link issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('ecmrUploadUrl', pm.response.json().url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/upload-link"
+          }
+        },
+        {
+          "name": "5.2 Upload e-CMR PDF Directly to RustFS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-CMR uploaded to RustFS (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "application/pdf" },
+              { "key": "If-None-Match", "value": "*" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "%PDF-1.4\n% FF Logistic e-CMR for {{flowShipmentNumber}}\n%%EOF\n"
+            },
+            "url": "{{ecmrUploadUrl}}"
+          }
+        },
+        {
+          "name": "5.3 Write-Once Check: Second e-CMR Upload Link -> 409",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Refused with 409 Conflict', () => pm.response.to.have.status(409));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/upload-link"
+          }
+        },
+        {
+          "name": "5.4 Request e-CMR Download Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-CMR download link issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('ecmrDownloadUrl', pm.response.json().url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/tms/shipments/{{flowShipmentId}}/ecmr/download-link"
+          }
+        },
+        {
+          "name": "5.5 Download e-CMR from RustFS",
+          "request": {
+            "method": "GET",
+            "url": "{{ecmrDownloadUrl}}"
+          }
+        },
+        {
+          "name": "5.6 Request e-POD Upload Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-POD upload link issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('epodUploadUrl', pm.response.json().url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/epod/upload-link"
+          }
+        },
+        {
+          "name": "5.7 Upload e-POD Directly to RustFS",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-POD uploaded to RustFS (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "PUT",
+            "header": [
+              { "key": "Content-Type", "value": "image/png" },
+              { "key": "If-None-Match", "value": "*" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "FF-EPOD-SIGNATURE-PLACEHOLDER-{{flowShipmentNumber}}"
+            },
+            "url": "{{epodUploadUrl}}"
+          }
+        },
+        {
+          "name": "5.8 Request e-POD Download Link",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('e-POD download link issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('epodDownloadUrl', pm.response.json().url);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{edge}}/api/v1/geo/routes/{{routeId}}/stops/IST-HDK/epod/download-link"
+          }
+        },
+        {
+          "name": "5.9 Download e-POD from RustFS",
+          "request": {
+            "method": "GET",
+            "url": "{{epodDownloadUrl}}"
+          }
+        }
+      ]
+    },
+    {
+      "name": "6. Superset & Multi-Tenant RLS Isolation (S8)",
+      "description": "Tek Superset (:8088) üzerinde iki ayrı tenant'ın (EU ve TR) guest token ile kendi verilerini izole gördüğünü doğrular.",
+      "item": [
+        {
+          "name": "6.1 Negative Test: EU User Requests TR Guest Token -> 403",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Cross-tenant guest token refused (403)', () => pm.response.to.have.status(403));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dashboardId\": \"{{dashboardId}}\",\n  \"tenantId\": \"ff-tr-distribution\"\n}"
+            },
+            "url": "{{identity}}/api/v1/guest-tokens"
+          }
+        },
+        {
+          "name": "6.2 Get EU Guest Token (ff-eu-freight)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('EU guest token issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('euGuestToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dashboardId\": \"{{dashboardId}}\"\n}"
+            },
+            "url": "{{identity}}/api/v1/guest-tokens"
+          }
+        },
+        {
+          "name": "6.3 Get TR Guest Token (ff-tr-distribution)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('TR guest token issued (200)', () => pm.response.to.have.status(200));",
+                  "pm.collectionVariables.set('trGuestToken', pm.response.json().token);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{trToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"dashboardId\": \"{{dashboardId}}\"\n}"
+            },
+            "url": "{{identity}}/api/v1/guest-tokens"
+          }
+        },
+        {
+          "name": "6.4 Query Superset Chart as EU (Sees ff-eu-freight Rows)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('EU chart returns 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-GuestToken", "value": "{{euGuestToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"datasource\": { \"id\": 1, \"type\": \"table\" },\n  \"force\": true,\n  \"queries\": [\n    {\n      \"columns\": [\n        {\n          \"columnType\": \"BASE_AXIS\",\n          \"sqlExpression\": \"delivery_month\",\n          \"label\": \"delivery_month\",\n          \"expressionType\": \"SQL\",\n          \"timeGrain\": \"P1M\"\n        }\n      ],\n      \"metrics\": [\"delivered_shipments\"],\n      \"orderby\": [[\"delivered_shipments\", false]],\n      \"row_limit\": 100\n    }\n  ],\n  \"result_format\": \"json\",\n  \"result_type\": \"full\",\n  \"form_data\": {\n    \"slice_id\": 1,\n    \"dashboardId\": 1,\n    \"viz_type\": \"echarts_timeseries_bar\"\n  }\n}"
+            },
+            "url": "{{superset}}/api/v1/chart/data"
+          }
+        },
+        {
+          "name": "6.5 Query Superset Chart as TR (Cannot See EU Rows)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('TR chart returns 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "X-GuestToken", "value": "{{trGuestToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"datasource\": { \"id\": 1, \"type\": \"table\" },\n  \"force\": true,\n  \"queries\": [\n    {\n      \"columns\": [\n        {\n          \"columnType\": \"BASE_AXIS\",\n          \"sqlExpression\": \"delivery_month\",\n          \"label\": \"delivery_month\",\n          \"expressionType\": \"SQL\",\n          \"timeGrain\": \"P1M\"\n        }\n      ],\n      \"metrics\": [\"delivered_shipments\"],\n      \"orderby\": [[\"delivered_shipments\", false]],\n      \"row_limit\": 100\n    }\n  ],\n  \"result_format\": \"json\",\n  \"result_type\": \"full\",\n  \"form_data\": {\n    \"slice_id\": 1,\n    \"dashboardId\": 1,\n    \"viz_type\": \"echarts_timeseries_bar\"\n  }\n}"
+            },
+            "url": "{{superset}}/api/v1/chart/data"
+          }
+        }
+      ]
+    },
+    {
+      "name": "7. Optional: TR Tenant Shipment (Watch TR Appear in Superset)",
+      "description": "TR tenant'ı (ff-tr-distribution) için bir sevkiyat teslim eder; ardından 6.4 ve 6.5'i tekrar çalıştırarak iki tenant'ın bağımsız sayılarını görebilirsin.",
+      "item": [
+        {
+          "name": "7.1 Plan TR Shipment (Ankara -> Izmir)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('TR shipment planned (201)', () => pm.response.to.have.status(201));",
+                  "pm.collectionVariables.set('trShipmentId', pm.response.json().id);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{trToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"consignorName\": \"Anadolu Dagitim AS\",\n  \"consigneeName\": \"Izmir Liman Depo\",\n  \"equipmentCode\": \"CSQU3054383\",\n  \"sscc\": \"106141411234567897\",\n  \"incoterm\": \"DAP\",\n  \"origin\": \"Ankara Lojistik Ussu\",\n  \"destination\": \"Izmir Kemalpasa\",\n  \"grossWeightKg\": 12000,\n  \"legs\": [\n    { \"mode\": \"RAIL\", \"origin\": \"Ankara Lojistik Ussu\", \"destination\": \"Izmir Alsancak\", \"distanceKm\": 580, \"carrierReference\": \"TCDD-TR-2026\" },\n    { \"mode\": \"ROAD\", \"origin\": \"Izmir Alsancak\", \"destination\": \"Izmir Kemalpasa\", \"distanceKm\": 35, \"carrierReference\": \"TR-35-FF-0101\" }\n  ]\n}"
+            },
+            "url": "{{edge}}/api/v1/tms/shipments"
+          }
+        },
+        {
+          "name": "7.2 Deliver TR Shipment (Then Re-Run 6.4 & 6.5)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('TR shipment delivered (200)', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{trToken}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"receivedBy\": \"Izmir Dock 1\"\n}"
+            },
+            "url": "{{edge}}/api/v1/tms/shipments/{{trShipmentId}}/delivery"
+          }
+        }
+      ]
+    }
+  ]
+}
