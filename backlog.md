@@ -258,10 +258,10 @@ Goal: numbers instead of opinions.
 - [ ] **S07-03 Run the failure drills on both sides** · docs
   Database away, Kafka away, one area away, a slow area: what the user sees, what is lost, what recovers by itself.
   Kafka away during that load, both sides. On the services, arrivals and analytics froze and the outbox drained 412 s after the broker came back. On the modulith, arrivals kept up and analytics caught up 231 s after. Nothing lost, and the caller did not see it either time. PostgreSQL away, both sides (`try-database`): five plans failed at 30 s on each, everything after a successful plan succeeded, and the first readable sample was already caught up, with an empty outbox. Routing away, services side only (`try-routing-away`): no plan failed, it fell back to the straight-line estimate after 1 s, and 7.8 % of the direct distance calls failed at the gateway's 2 s. Deliveries never queued. A slow area, and startup, are still open.
-- [ ] **S07-04 Count the cost of a change** · docs
-  Three real changes (a new field, a new rule in one area, a new flow between areas): files, repositories, pull requests, deployments, on each side.
+- [x] **S07-04 Count the cost of a change** · docs
+  Three real changes, in `comparison`: S05-05's document columns (shared 16 files, modulith 5 and one deployment, services 10 and two), S06-02's analytics rule (shared only, 11 files, one deployment), S05-03 flow 1 (shared 15, modulith 4 and one deployment, services 6, plus a forced build of routing).
 - [ ] **S07-05 Write the comparison guide** · docs
-  The five runs are side by side in `comparison` (2026-11-22). Startup, a slow area, and the cost of a change are not in it.
+  The five runs and the three changes are in `comparison` (2026-11-22). Startup and a slow area are not.
 - [ ] **S07-06 Ship a sprint with one workflow** · runtime
   The `ship` chain as a workflow in runtime (a release train): started with a branch name, it merges each repository's pull request in the build order and waits for its run. Needs a token that may act on the other repositories. Optional.
 
