@@ -221,11 +221,37 @@
   margin-block-start: 0.6rem;
 }
 
-/* Admonitions */
+/* Admonitions & verdict quote blocks */
 .doc .admonitionblock td.content {
   background: var(--ff-surface-subtle);
   border: 1px solid var(--ff-border);
   border-radius: var(--ff-radius);
+}
+
+.doc .quoteblock {
+  background: var(--ff-surface-subtle);
+  border: 1px solid var(--ff-border);
+  border-inline-start: 4px solid var(--ff-nav-bg);
+  border-radius: var(--ff-radius);
+  color: var(--ff-text);
+  padding: 0.9rem 1.35rem 1.05rem;
+}
+
+.doc .quoteblock blockquote {
+  margin-block-start: 0;
+}
+
+.doc .quoteblock .paragraph {
+  font-style: normal;
+}
+
+.doc .quoteblock .paragraph + .paragraph {
+  margin-block-start: 0.75rem;
+}
+
+.doc .quoteblock em {
+  color: var(--ff-text-strong);
+  font-style: italic;
 }
 
 /* Landing page KPI cards ([.kpi-grid] wrapping [.kpi] sidebar blocks) */

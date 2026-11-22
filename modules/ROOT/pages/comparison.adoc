@@ -5,6 +5,16 @@ Five runs of the same script. Five virtual users, 30 seconds of warm-up, four mi
 
 The Kafka pair is the clean load. Nothing failed, and no workload pod was restarting. The database runs and the routing run include users waiting, and a process coming back. Their CPU is not the cost of five users.
 
+[[takeaway]]
+== The verdict: modular monolith by default
+
+[quote]
+____
+_The measurements are clear: a modular monolith should be the default starting architecture._ With identical business rules, it uses *~40% less idle memory* (1,449 vs 2,413 MiB), delivers *~37% lower cross-area latency* (12.7 vs 20.1 ms), keeps internal flows running during a broker outage, and ships cross-area changes in a single rollout.
+
+_Microservices are not a "better" architecture — they are a cost worth paying only when independent scaling, strict fault isolation, or autonomous team ownership actually demands it._ Because the hexagonal ports and event contracts are designed in from day one, starting as a modulith does not lock you out: _you earn the hatches when the workload proves you need them._
+____
+
 [[caller]]
 == What the caller saw
 
