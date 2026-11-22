@@ -16,7 +16,8 @@ The work goes in sprints. Each sprint is one pull request in every repository it
 | S5 Routing and documents | shared, modulith, services | Route planning, e-CMR and e-POD on both sides
 | S6 Events out and analytics | shared, modulith, services | Deliveries reach the analytics database from either side
 | S7 The comparison | docs, runtime | Memory, startup, latency, failures and the cost of a change, measured on both sides
-| S8–S13 | shared, runtime | Reporting and Superset, console, partner gateways, tracing, multi-cluster: built once, against the edge
+| S8 Reporting and Superset | shared, runtime | One tenant's months in Superset. The guest token names the tenant. Dashboards are files
+| S9–S13 | shared, runtime | Console, partner gateways, tracing, multi-cluster: built once, against the edge
 |===
 
 [mermaid]
@@ -25,7 +26,7 @@ flowchart LR
   S0[S0 foundation] --> S1[S1 skeleton + switch] --> S2[S2 CI + canary]
   S2 --> S3[S3 warehousing] --> S4[S4 transportation + flows] --> S5[S5 routing] --> S6[S6 analytics]
   S6 --> S7[S7 the comparison]
-  S7 --> S8[S8–S13 built once]
+  S7 --> S8[S8 Superset] --> S9[S9–S13 built once]
 ....
 
 S1 to S6 port the business from the earlier single-repository version (its sprints S1–S8); what is new is the ports, the services side and the comparison.
