@@ -314,6 +314,10 @@ The pages follow the Postman collection and the HTTP Client file in this reposit
   Superset synced to `dc56530`. The frame title was `Deliveries per month (ff-eu-freight)`, November 2026, the 7409 from the Superset page.
 - [x] **S09-04 Write the first run** · docs
   The first run is in `try-console` (2026-11-22).
+- [x] **S09-05 Align the leg, and let the bucket name the console** · shared, base, modulith, services
+  The form's one leg starts where the shipment starts and ends where it ends. Preparing the bucket names `http://localhost:8090` and `http://localhost:5173` for `GET`, `PUT` and `HEAD`.
+  Done when: the page serves those ends, and a new pod restores the browser rule after it has been removed.
+  The console on 8090 serves `Cologne Eifeltor` and `Istanbul Hadimkoy` (`ee3a0b5`). `logistics-app` `2b6cccd`, synced and Healthy, logged the two origins and the preflight returned `access-control-allow-origin: http://localhost:8090` (2026-11-22). Routing and transportation images are `bb64b28`, for the other side of the switch.
 
 ## S10–S13 — Built once, against the edge
 

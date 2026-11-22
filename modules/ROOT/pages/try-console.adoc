@@ -59,6 +59,8 @@ image::console/warehousing.png[Console Depo page showing IST-HDK, rack A-01-01, 
 
 ✅ `SHP-17418` planned. *Teslim al*, *Yola çık*, then *Teslim et* with `Dock 2, A. Yilmaz`. The row ended `Teslim edildi`. CO₂e saved 756 kg, 64.5 percent.
 
+The defaults on that run were the two names the edge refused. After it, the form's leg starts at `Cologne Eifeltor` and ends at `Istanbul Hadimkoy`, the same ends as the shipment (`ee3a0b5`). The page on 8090 serves that bundle.
+
 image::console/shipments.png[Console Sevkiyat page showing SHP-17418, multimodal leg form, CO2e savings, and e-CMR upload and download controls]
 
 [[route]]
@@ -73,3 +75,5 @@ image::console/routing-simulation.png[Console Rota page showing territory IST-EU
 The file buttons ask the edge for a link and then talk to RustFS at `localhost:9000`. The bucket `ff-documents` allows origin `http://localhost:8090` (and `http://localhost:5173`) for `GET`, `PUT` and `HEAD`. Before that rule the page said `Depolama sunucusuna ulaşılamadı`: the preflight came back without `access-control-allow-origin`.
 
 ✅ After the rule, *e-POD yükle* stored `epod.png` at `ff-eu-freight/epod/rte-5008-ist-esn/signature.png`, and *e-POD indir* opened it. On `SHP-17418`, *e-CMR yükle* stored `ecmr.pdf` at `ff-eu-freight/ecmr/shp-17418/ecmr.pdf`, and *e-CMR indir* opened it.
+
+That rule was put on the bucket by hand for this run. From image `2b6cccd` the application writes it when it prepares the bucket. With the rule removed, one upload link brought the preflight back: `access-control-allow-origin: http://localhost:8090`, methods `GET`, `PUT`, `HEAD`. The pod logged `browser origins [http://localhost:8090, http://localhost:5173]`.
