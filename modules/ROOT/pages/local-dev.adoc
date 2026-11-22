@@ -32,6 +32,49 @@ image::dev/maven-shared.png[IntelliJ Maven tree showing FF Logistic Shared modul
 image::dev/maven-services.png[IntelliJ Maven tree showing FF Logistic Services modules: routing, transportation, warehousing]
 --
 
+=== Build platform & base library dependencies
+
+Projects do not inherit from `spring-boot-starter-parent`. Instead `base/` owns `ff-base-bom` (versions only) and `ff-base-parent` (Java 25 compiler flags, plugin versions, enforcer rules), plus seven focused auto-configured libraries:
+
+[plantuml,build-platform,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam component {
+  BackgroundColor #f8fafc
+  BorderColor #0f241d
+}
+
+package "base (ff-logistic-base)" {
+  [ff-base-bom\n(imports Boot 4.1 + Modulith 2.1)] as bom
+  [ff-base-parent\n(Java 25 + build conventions)] as parent
+  [ff-base-tenant] as tenant
+  [ff-base-security] as sec
+  [ff-base-persistence] as per
+  [ff-base-web] as web
+  [ff-base-storage] as sto
+  [ff-base-events] as ev
+  [ff-base-app\n(chassis + migrate + OTel)] as app
+}
+
+[shared\ndomain cores · contracts ·\nidentity · loader · reporting] as shared
+[modulith\nlogistics-app] as mod
+[services\nwms · tms · geo · gateway] as svc
+
+parent ..> bom : imports
+sec --> tenant
+per --> tenant
+web --> tenant
+app --> tenant
+shared --> parent : parent
+mod --> parent : parent
+svc --> parent : parent
+mod --> shared : same domain jars
+svc --> shared : same domain jars
+@enduml
+....
+
 == Connecting your IDE to the local k3d cluster
 
 Every platform dependency in `ff-logistic` is published on a fixed `localhost` NodePort (`runtime/deploy/cluster/k3d-config.yaml`). Default `application.yml` values already target these ports, so starting a Spring Boot application from IntelliJ IDEA works immediately once the cluster is running:
@@ -86,10 +129,59 @@ image::dev/postgres-rls.png[IntelliJ SQL console executing SET app.tenant_id = f
 
 == Architectural guardrails every PR must pass
 
+=== Transactional outbox & dual-side delivery
+
+Every business event is written to `event_publication` in the same PostgreSQL transaction as the domain change (`ff-base-events`), in each process's own schema (`modulith`, `transportation`, `routing`, `reporting`), and delivered after commit:
+
+[plantuml,delivery-outbox-flow,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+actor Planner
+box "Request thread — one DB transaction" #f8fafc
+  participant "Transportation\n(domain core)" as tms
+  database "ff_logistics\ntms_shipments" as ship
+  database "Outbox\n<schema>.event_publication" as reg
+end box
+box "After commit — async / Kafka" #ecfdf5
+  participant "Warehousing\n(Flow 2)" as wms
+  queue "Kafka\nshipment-delivered" as kf
+  participant "analytics-loader" as al
+end box
+
+Planner -> tms : POST /api/v1/tms/shipments/{id}/delivery
+tms -> ship : status = DELIVERED
+tms -> reg : insert ShipmentDelivered
+note over ship, reg : atomic commit: delivery and event\nexist together or not at all
+tms --> Planner : 200 OK
+reg -> wms : in-process (modulith)\nor via Kafka (services)
+reg -> kf : JSON + W3C traceparent
+kf -> al : idempotent insert + mark month
+reg -> reg : completion_date = now
+@enduml
+....
+
 . **Wiring-agnostic domain cores**: business rules live once in `shared/domain/ff-domain-*`. Declare a Java port interface instead of importing HTTP clients or Kafka adapters into a core (xref:architecture.adoc[Architecture]).
 . **Spring Modulith verification**: `ModularityTest` (`ApplicationModules.of(...).verify()`) enforces module boundaries both across jars in `modulith` and between `generation`/`delivery` inside `shared/reporting` (xref:decisions.adoc#d2[decision 2]).
 . **Shared event contracts (`ff-contracts`)**: update topic names and sample JSON payloads in `shared/ff-contracts` first so `modulith`, `services`, and `reporting` all validate against one contract (xref:decisions.adoc#d14[decision 14]).
 . **Per-area migrations & `@Profile("!migrate")`**: every Flyway area is registered via `MigrationArea`; background Kafka listeners, mail senders, and webhooks must carry `@Profile("!migrate")` so PreSync migration Jobs start fast and exit cleanly.
+
+=== RFC 9457 error contract (`ff-base-web`)
+
+All HTTP error responses return `application/problem+json` with deterministic problem types:
+
+[cols="1,4",options="header"]
+|===
+| Status | Cause
+
+| `400` | Bean validation (`invalid-payload`), unreadable/empty body (`missing-body`, `unreadable-body`), or broken domain rule (`domain-validation`)
+| `401` | Missing, expired, or invalid JWT, or missing/malformed `tenant_id` claim
+| `403` | Caller lacks the required `@PreAuthorize` role or requests another tenant's guest token
+| `404` | Entity does not exist for the caller's tenant (`not-found`)
+| `409` | Duplicate code/record, backward shipment transition, or write-once document already stored
+| `503` | Upstream dependency unavailable (`object-store-unavailable`, `road-matrix-unavailable`)
+|===
 
 == Where a change belongs
 
