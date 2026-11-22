@@ -24,6 +24,7 @@
 ** xref:try-analytics.adoc[Try it: analytics, from either side]
 ** xref:try-superset.adoc[Try it: one tenant's months]
 ** xref:try-console.adoc[Try it: the console]
+** xref:try-tracing.adoc[Try it: tracing with Jaeger]
 
 .Delivery & GitOps
 * xref:gitops.adoc[GitOps: Argo CD & Rollouts]

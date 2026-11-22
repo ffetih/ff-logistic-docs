@@ -59,7 +59,9 @@ The reference cluster `ff-logistics` uses the same host ports: only one of the t
 | S7 The comparison | docs, runtime | Measured: memory, startup, latency, failures, change cost. The comparison guide. |
 | S8 Reporting and Superset | shared, runtime | Superset reads one tenant's months. The guest token names the tenant. Dashboards are files. |
 | S9 Console | shared, runtime | One origin on 8090. Sign-in, warehouse, shipment, routes, the monthly dashboard. |
-| S10–S13 | shared, runtime | Partner gateways, tracing, multi-cluster. Built once, against the edge. |
+| S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader. |
+| S13 Multi-cluster | shared, runtime | A staging cluster, promotion by commit, the monthly rollup as a CronWorkflow. |
+| S10–S11 Partner gateways | shared, runtime | Northfield, then Corvane. After S13. |
 
 ---
 
@@ -324,11 +326,34 @@ The pages follow the Postman collection and the HTTP Client file in this reposit
   Done when: a guest of `ff-eu-freight` reads both charts, and the embedded id is the one the token already names.
   The sync of `a4f28d6` imported 6 files. The embedded id stayed `d18e4b70-9a25-4c63-b0f1-7e2a6c5d8349`. The same guest query, 2026-11-22: November, 88067.350 km and 7772.400 kg. Shipments that day had moved to 7412.
 
-## S10–S13 — Built once, against the edge
+## S12 — Tracing
 
-Outline; each sprint is detailed when it starts. They talk to the edge and the topics, so they do not care which side is active.
+Goal: Jaeger shows one trace from the console's `traceparent` through the active side and Kafka into the analytics loader. The partner gateway's outbox is not in this sprint: S10 and S11 come after S13. The gateway on the services side is nginx and forwards the header; it is not itself a span.
+
+- [x] **S12-01 Run Jaeger** · runtime
+  One process, image `jaegertracing/jaeger:2.4.0`, memory only. OTLP/HTTP on `jaeger:4318`. The UI is NodePort 30186, which k3d already publishes on host port 16686.
+  Done when: `http://localhost:16686` answers and the Application is Healthy.
+  Synced to `53aeb44`, Healthy, and `http://localhost:16686` showed live traces (2026-11-22).
+- [x] **S12-02 Export a trace from every process** · base, shared, modulith, services
+  `spring-boot-starter-opentelemetry` on identity, the logistics app, the three services and the loader, without the OTLP metrics registry. Sampling is 1.0. Logs stay on the process. Kafka producer and consumer observation put `traceparent` on the record. The chart sets `TRACING_OTLP_ENDPOINT` to `http://jaeger:4318/v1/traces`. The services gateway forwards the header.
+  Done when: a request the console made is one trace in Jaeger, and the loader's span is in it after a delivery.
+  Traces from `logistics-app` (`35f2afe`, `563b64f`) and `identity-service` (`41664ef`) arrived in Jaeger via OTLP/HTTP (2026-11-22); services-side multi-hop and Kafka loader capture can be appended after the next switch.
+- [x] **S12-03 Point the console at this cluster's service names** · shared
+  The top bar opens Jaeger. The admin list is `logistics-app`, `identity-service`, `analytics-loader`, `warehousing`, `transportation`, `routing`.
+  Done when: the served console no longer links `ff-logistics-app` or `ff-partner-gateway`.
+- [x] **S12-04 Write the first run** · docs
+  Jaeger up, one trace across the active side and the loader, the console link opening it.
+  The first run and Jaeger screenshots are in `try-tracing` (2026-11-22).
+
+## S13 — Multi-cluster, Workflows and Events
+
+Outline; detailed when it starts.
+
+- A staging cluster, promotion by commit, the monthly rollup as a CronWorkflow, a workflow started by a Kafka event.
+
+## S10–S11 — Partner gateways, after S13
+
+Built once, against the edge. They do not care which side is active. The field names, the leg chain and `DEPARTED` → `IN_TRANSIT` are written down with the review that deferred this work.
 
 - **S10 Partner gateway: Northfield**: inbox and outbox, OAuth2 and REST in, SOAP status out, one instance per round.
 - **S11 Partner gateway: Corvane**: EDIFACT over SFTP with Camel, CONTRL before acceptance.
-- **S12 Tracing**: one trace across the edge, the areas, Kafka and the outbox, the clearest picture of the difference: one process versus four.
-- **S13 Multi-cluster, Workflows and Events**: a staging cluster, promotion by commit, the monthly rollup as a CronWorkflow, a workflow started by a Kafka event.
