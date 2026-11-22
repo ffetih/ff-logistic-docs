@@ -16,7 +16,7 @@ Each item lists:
 - **Port**: paths in `ff-devops-logistic-app` to start from.
 - **Done when**: the test, command or screen that proves it.
 
-Roles: Claude implements and delivers each sprint as one branch per repository. The owner pushes, opens and merges the pull requests, syncs in Argo CD, tests and tags.
+Workflow: each sprint is developed as one branch per repository, merged via pull request, synced in Argo CD, verified on the cluster, and tagged.
 
 ## The three rules everything follows
 
