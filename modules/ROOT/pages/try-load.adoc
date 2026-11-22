@@ -3,7 +3,7 @@
 
 xref:runtime::cluster-guide.adoc#load[The load script] runs the walkthrough against the edge: each virtual user plans a shipment, picks it up, departs, delivers it to the Hadimkoy hub, then reads the warehouses and a road distance. A second terminal stops Kafka while that runs. k6 says what the caller saw. The drill says what was waiting behind the edge.
 
-The pair was run once on each side. The services, on 2026-11-21. The modulith, on 2026-11-22, after the switch below. Five virtual users, 30 seconds of warm-up, four minutes measured, Kafka away for 60 seconds. Startup time is not in these files.
+The pair was run once on each side. The services, on 2026-11-21. The modulith, on 2026-11-22, after the switch below. Five virtual users, 30 seconds of warm-up, four minutes measured, Kafka away for 60 seconds. Startup to ready is in xref:comparison.adoc#startup[the comparison].
 
 [[run]]
 == How a run is started
@@ -246,4 +246,4 @@ From the moment the broker was gone, arrivals stayed with the deliveries: flow 2
 * *Flow 1 is the request that moves.* Booking a road leg asks routing. A method call against an HTTP call is the whole of the difference in `plan`. The writes, and the direct distance call, are already short on both sides.
 * *Flow 2 is where a minute without Kafka is felt.* On the services the dock learns late. On the modulith the dock learns in-process, and only analytics, which crosses Kafka on both sides, waits.
 * *Memory is paid at rest, and the modulith pays for fewer processes.* Load added CPU on both. The services added almost no memory. The modulith added some, and stayed the smaller set.
-* *These are two runs of five users, one minute of Kafka, not a capacity test.* The one-second pause sets the rate. The database runs and the routing run are recorded separately, and the five runs sit together in xref:comparison.adoc[the comparison]. Startup time is not in these files.
+* *These are two runs of five users, one minute of Kafka, not a capacity test.* The one-second pause sets the rate. The database runs and the routing run are recorded separately, and the five runs sit together in xref:comparison.adoc[the comparison]. Startup to ready is in xref:comparison.adoc#startup[the comparison].
