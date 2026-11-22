@@ -1,0 +1,85 @@
+= Try it: distributed tracing with Jaeger
+:description: S12 as numbered steps: Jaeger 2.4 on port 16686, W3C traceparent from the console through the active side and Kafka, and live spans in Jaeger UI.
+
+Every request the console makes carries a W3C `traceparent` header (`00-<traceId>-<spanId>-01`). Both nginx proxies (the console and the services gateway) forward it untouched, every Spring Boot 4.1 process exports spans over OTLP/HTTP (`http://jaeger:4318/v1/traces`) through `ff-base-app`'s shared defaults, and Kafka producer and consumer observations attach `traceparent` to every record so `analytics-loader` and downstream consumers continue the same trace.
+
+[mermaid]
+....
+flowchart LR
+  C["Console :8090<br/>generates traceparent<br/>İz: &lt;id&gt; ↗"] -->|"HTTP + traceparent"| EDGE["edge :8081<br/>logistics-app OR<br/>gateway → services"]
+  C -->|"/identity + traceparent"| ID["identity-service :8085"]
+  EDGE -->|"Kafka record + traceparent"| AL["analytics-loader :8086"]
+  EDGE -. "OTLP/HTTP :4318" .-> J["Jaeger 2.4.0<br/>UI :16686"]
+  ID -. "OTLP/HTTP :4318" .-> J
+  AL -. "OTLP/HTTP :4318" .-> J
+....
+
+The defaults live once in `base/ff-base-app/src/main/resources/META-INF/ff/app-defaults.yml`:
+
+* *Sampling*: `TRACING_SAMPLING_PROBABILITY=1.0` locally (every request traced).
+* *OTLP export*: `spring-boot-starter-opentelemetry` (OpenTelemetry SDK `1.62.0`), without the OTLP metrics registry; logs stay on stdout with `[%X{traceId:-},%X{spanId:-}]` correlation.
+* *Kafka propagation*: `spring.kafka.template.observation-enabled=true` and `spring.kafka.listener.observation-enabled=true`.
+* *Helm chart wiring*: `ff-service` sets `TRACING_OTLP_ENDPOINT=http://jaeger:4318/v1/traces` on every service pod.
+
+The screenshots below are from the first live run on 2026-11-22 against the modulith (`logistics-app`) and `identity-service`.
+
+[[up]]
+== 1. Jaeger is up
+
+`ff-root` creates the `jaeger` Application (`deploy/platform/jaeger`, image `jaegertracing/jaeger:2.4.0`, memory-only single process, NodePort `30186` → host port `16686`).
+
+[source,bash]
+----
+argocd app sync jaeger && argocd app wait jaeger --health --timeout 180
+curl -s -o /dev/null -w "%{http_code}\n" localhost:16686/
+----
+
+✅ `200`, Application `Healthy`, and the Jaeger UI opens at `http://localhost:16686`.
+
+[[console-traces]]
+== 2. From a console click to Jaeger spans
+
+Open the console at `http://localhost:8090` as `nexus.planner` (`ff-eu-freight`). After any request, click *İz: `<traceId>` ↗* in the top bar (or open any service shortcut under *Yönetim → Dağıtık izleme*: `logistics-app`, `identity-service`, `analytics-loader`, `warehousing`, `transportation`, `routing`).
+
+=== Warehousing read (`GET /api/v1/wms/warehouses/\{id}/bins`)
+
+Trace `35f2afe` (`26.78 ms`, 7 spans, depth 3): shows `security filterchain before` → `authenticate bearertoken` (`1.21 ms`, local JWKS verification) → `authorize request` (`97 µs`) → `secured request` → `authorize method` (`1.08 ms`, `ExpressionAuthorizationDecision [granted=true, expressionAttribute=hasAnyRole('WAREHOUSE_OPERATOR', 'TENANT_ADMIN')]`) → `security filterchain after`.
+
+image::tracing/jaeger-warehousing-bins.png[Jaeger trace 35f2afe for logistics-app GET /api/v1/wms/warehouses/\{id}/bins showing 7 spans and Spring Security JWT and method authorization tags]
+
+=== Route optimization (`POST /api/v1/geo/routes`)
+
+Trace `563b64f` (`30.01 ms`, 7 spans, depth 3): shows request authorization (`165 µs`) and method authorization (`458 µs`, `hasAnyRole('DISPATCHER', 'TENANT_ADMIN')`) inside the same `logistics-app` process.
+
+image::tracing/jaeger-routing-plan.png[Jaeger trace 563b64f for logistics-app POST /api/v1/geo/routes showing 7 spans and route planning execution timeline]
+
+[[identity-trace]]
+== 3. Guest-token exchange in `identity-service`
+
+Opening *Rapor → Gömülü BI panosu* sends `POST /identity/api/v1/guest-tokens`. Trace `41664ef` (`122.35 ms`, 7 spans) shows `identity-service` authenticating the bearer token (`75.05 ms`), checking `hasRole('LOGISTICS_PLANNER')` (`17.37 ms`), and signing the HS256 Superset guest token.
+
+image::tracing/jaeger-identity-guest-token.png[Jaeger trace 41664ef for identity-service POST /api/v1/guest-tokens showing JWT authentication and LOGISTICS_PLANNER method authorization]
+
+[[two-sides]]
+== 4. One process vs four processes in Jaeger
+
+The trace model makes the modulith vs microservices boundary directly visible in one timeline:
+
+[cols="2,3,3",options="header"]
+|===
+| Flow | Modulith (`logistics-app`) | Services (`warehousing` · `transportation` · `routing`)
+
+| *Flow 1 (`plan`)*
+| One service (`logistics-app`): method call into routing inside the same JVM.
+| Two services in one trace: `transportation` HTTP client span → `routing` `/api/v1/geo/distance` server span.
+
+| *Flow 2 (`deliver`)*
+| `logistics-app` commits and opens the arrival in-process, then publishes to Kafka with `traceparent` → `analytics-loader` continues the same trace.
+| `transportation` → Kafka (`traceparent`) → both `warehousing` and `analytics-loader` appear as sibling consumer spans in the same trace.
+
+| *Flow 3 (`stop completion`)*
+| `logistics-app` handles stop → delivery → arrival in-process, then `analytics-loader` via Kafka.
+| `routing` → Kafka → `transportation` → Kafka → `warehousing` + `analytics-loader` (four services chained under one `traceId`).
+|===
+
+Log lines on every pod carry the same correlation prefix (`[traceId,spanId]`), so a trace found in Jaeger maps directly back to `kubectl logs`.

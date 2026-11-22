@@ -79,7 +79,7 @@ ____
 * *Declarative GitOps*: Argo CD App-of-Apps (`ff-root`) and a Matrix `ApplicationSet` (`ff-implementation`) that switches modulith ↔ services in one Git commit.
 * *Progressive delivery*: Argo Rollouts canary releases with `AnalysisTemplate` health gates, PreSync database/Flyway Jobs and PostSync smoke tests.
 * *Multi-repo CI/CD*: reusable GitHub Actions workflows across six repositories, GHCR image publishing, values kept next to code (xref:decisions.adoc#d8[decision 8]).
-* *Measured resilience*: repeatable k6 load scenarios and failure drills (Kafka, PostgreSQL and routing stopped under load).
+* *Observability & resilience*: OpenTelemetry + Jaeger 2.4 distributed tracing across HTTP and Kafka (xref:try-tracing.adoc[Try it: tracing]), plus repeatable k6 load scenarios and failure drills.
 ****
 --
 
@@ -97,6 +97,9 @@ image::argocd/applications.png[Argo CD Applications list showing all 13 platform
 .Argo Rollouts: `logistics-app` canary Rollout, `AnalysisTemplate`, PreSync migration Job and PostSync smoke test
 image::argocd/logistics-app.png[Argo CD resource tree for logistics-app with Rollout, four pods, AnalysisTemplate, canary Service, PreSync migrate Job and PostSync smoke-test Job]
 
+.Jaeger 2.4: OpenTelemetry trace timeline (`POST /api/v1/geo/routes`, 7 spans, JWT & role authorization visible per span)
+image::tracing/jaeger-routing-plan.png[Jaeger UI showing distributed trace 563b64f for logistics-app POST /api/v1/geo/routes with 7 OpenTelemetry spans]
+
 == Technology stack
 
 [cols="2,5",options="header"]
@@ -108,7 +111,7 @@ image::argocd/logistics-app.png[Argo CD resource tree for logistics-app with Rol
 | Messaging & Contracts | Apache Kafka 4.2 (KRaft), transactional outbox (`event_publication`), JSON contract tests (`ff-contracts`)
 | Optimization & Storage | Timefold Solver (time windows), RustFS (S3-compatible, SigV4 presigned write-once links)
 | Identity & Edge | Keycloak 26.8, dedicated Identity facade + JWKS, nginx single-origin console & gateway
-| GitOps & Delivery | k3d, Argo CD 3.6 (App-of-Apps, ApplicationSet), Argo Rollouts 1.10, Helm, Kustomize, GitHub Actions, GHCR, k6
+| Observability & Delivery | OpenTelemetry, Jaeger 2.4, k3d, Argo CD 3.6, Argo Rollouts 1.10, Helm, Kustomize, GitHub Actions, GHCR, k6
 |===
 
 == Where to go next

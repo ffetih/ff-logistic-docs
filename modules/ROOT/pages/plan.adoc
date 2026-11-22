@@ -18,7 +18,9 @@ The work goes in sprints. Each sprint is one pull request in every repository it
 | S7 The comparison | docs, runtime | Memory, startup, latency, failures and the cost of a change, measured on both sides
 | S8 Reporting and Superset | shared, runtime | One tenant's months in Superset. The guest token names the tenant. Dashboards are files
 | S9 Console | shared, runtime, docs | One origin on 8090: sign-in, warehouse, shipment, route map, documents, embedded monthly dashboard
-| S10–S13 | shared, runtime | Partner gateways (Northfield REST/SOAP, Corvane EDIFACT/SFTP), Jaeger tracing, multi-cluster + Argo Workflows/Events
+| S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader
+| S13 Multi-cluster | shared, runtime | A staging cluster, promotion by commit, the monthly rollup as a CronWorkflow
+| S10–S11 Partner gateways | shared, runtime | Northfield, then Corvane. After S13
 |===
 
 [mermaid]
@@ -27,7 +29,7 @@ flowchart LR
   S0[S0 foundation] --> S1[S1 skeleton + switch] --> S2[S2 CI + canary]
   S2 --> S3[S3 warehousing] --> S4[S4 transportation + flows] --> S5[S5 routing] --> S6[S6 analytics]
   S6 --> S7[S7 the comparison]
-  S7 --> S8[S8 Superset] --> S9[S9 console] --> S10[S10–S13 next]
+  S7 --> S8[S8 Superset] --> S9[S9 console] --> S12[S12 tracing] --> S13[S13 multi-cluster] --> S10[S10–S11 gateways]
 ....
 
 S1 to S6 port the business from the earlier single-repository version (its sprints S1–S8); what is new is the ports, the services side, the measured comparison, and the Superset & Console integration.
