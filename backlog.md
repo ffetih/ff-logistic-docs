@@ -37,6 +37,7 @@ One single-node k3d cluster, `ff-logistic`, in WSL; Argo CD applies everything f
 | 8087 | 30087 | partner gateway |
 | 8088 | 30088 | Superset |
 | 8090 | 30090 | console |
+| 8092 | 30092 | Mailpit UI (S13; new port restarts k3d load balancer) |
 | 8180 | 30180 | Keycloak (for IDE runs) |
 | 9000 | 30900 | RustFS S3 API |
 | 9094 | 30094 | Kafka external listener (IDE runs) |
@@ -60,8 +61,9 @@ The reference cluster `ff-logistics` uses the same host ports: only one of the t
 | S8 Reporting and Superset | shared, runtime | Superset reads one tenant's months. The guest token names the tenant. Dashboards are files. |
 | S9 Console | shared, runtime | One origin on 8090. Sign-in, warehouse, shipment, routes, the monthly dashboard. |
 | S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader. |
-| S13 Multi-cluster | shared, runtime | A staging cluster, promotion by commit, the monthly rollup as a CronWorkflow. |
-| S10–S11 Partner gateways | shared, runtime | Northfield, then Corvane. After S13. |
+| S13 Reporting and notification | shared, runtime, docs | One `shared/reporting` process (`generation` + `delivery`): in-process HTML→PDF from `tenant_delivery_monthly`, RustFS Claim Check, Kafka `report-ready`, Mailpit/webhook delivery, traced in Jaeger. |
+| S14 Multi-cluster, Workflows and Events | shared, runtime | A staging cluster, promotion by commit, the monthly rollup and report run as CronWorkflows, a workflow started by Kafka. |
+| S15–S16 Partner gateways | shared, runtime | S15 Northfield, then S16 Corvane. After S14. |
 
 ---
 
@@ -328,7 +330,7 @@ The pages follow the Postman collection and the HTTP Client file in this reposit
 
 ## S12 — Tracing
 
-Goal: Jaeger shows one trace from the console's `traceparent` through the active side and Kafka into the analytics loader. The partner gateway's outbox is not in this sprint: S10 and S11 come after S13. The gateway on the services side is nginx and forwards the header; it is not itself a span.
+Goal: Jaeger shows one trace from the console's `traceparent` through the active side and Kafka into the analytics loader. The partner gateway's outbox is not in this sprint: S15 and S16 (originally numbered S10–S11) come after S14. S12 tags and commit labels stay as shipped. The gateway on the services side is nginx and forwards the header; it is not itself a span.
 
 - [x] **S12-01 Run Jaeger** · runtime
   One process, image `jaegertracing/jaeger:2.4.0`, memory only. OTLP/HTTP on `jaeger:4318`. The UI is NodePort 30186, which k3d already publishes on host port 16686.
@@ -345,15 +347,44 @@ Goal: Jaeger shows one trace from the console's `traceparent` through the active
   Jaeger up, one trace across the active side and the loader, the console link opening it.
   The first run and Jaeger screenshots are in `try-tracing` (2026-11-22).
 
-## S13 — Multi-cluster, Workflows and Events
+## S13 — Reporting and notification
+
+Goal: tenant-scoped monthly PDF reports and notification delivery, built once in `shared/reporting` outside the modulith/services switch. Whichever implementation is active behind the edge, reporting reads the same `tenant_delivery_monthly` rows.
+
+Architecture constraints for this sprint:
+
+- **One JVM process, two Spring Modulith modules**: `shared/reporting` holds `generation` and `delivery`. A second JVM would only buy a second service name on a single k3d node where Superset already takes ~1.5 GiB. One database (`ff_reporting`), two module schemas (`generation`, `delivery`).
+- **Eventing and tracing stay real**: `generation` writes the PDF to RustFS (Claim Check) and publishes `ff.logistics.reporting.report-ready` to Kafka via its outbox; `delivery` consumes it from Kafka in the same process. Jaeger shows both the producer and consumer spans in one trace.
+- **In-process HTML→PDF, no new formulas**: PDFs render in-process from HTML templates (OpenPDF-backed HTML→PDF such as Flying Saucer, or OpenHTMLToPDF — no Chromium, BIRT, or Jasper in this cluster). Figures come directly from `tenant_delivery_monthly` via `analytics_reader` with `SET LOCAL app.tenant_id`; no new carbon formula is written.
+- **Practical routing & port notes**: the console's `nginx.conf` routes `/api` to `edge:8081`, so reporting calls use their own prefix (like `/identity`, e.g. `/reporting` → `reporting`) without touching the edge. Mailpit has no published host port in k3d yet; adding `8092 -> 30092` in `k3d-config.yaml` is a new port and restarts the k3d load balancer (`kubectl port-forward` avoids the restart).
+
+- [ ] **S13-01 Run Mailpit** · runtime
+  Single-pod Mailpit (`axllent/mailpit`) in `deploy/platform/mailpit`: SMTP on `mailpit:1025`, web UI on NodePort `30092`. Add `8092 -> 30092` to `k3d-config.yaml` (new host port; requires restarting the k3d load balancer, or `kubectl port-forward` in the meantime).
+  Done when: Mailpit is Healthy in Argo CD, accepts SMTP on `mailpit:1025`, and shows received messages in its UI.
+- [ ] **S13-02 Add the `report-ready` contract and `shared/reporting` (`generation` module)** · shared
+  Add `ff.logistics.reporting.report-ready` (topic and example payload) to `ff-contracts`. Create `shared/reporting` as one Spring Boot / Spring Modulith app backed by `ff_reporting` (schemas `generation` and `delivery`). The `generation` module reads `tenant_delivery_monthly` from `ff_logistics_analytics` as `analytics_reader` with `SET LOCAL app.tenant_id`, renders HTML→PDF in-process (no Chromium, BIRT, or Jasper), stores the PDF in RustFS via `ff-base-storage`, serves `POST /api/v1/reports/monthly`, `GET /api/v1/reports` and presigned download links, and publishes `report-ready` through `ff-base-events` outbox to Kafka.
+  Done when: `ModularityTest` verifies `generation` and `delivery` boundaries, the contract test passes, a PDF downloads with `tenant_delivery_monthly` numbers, and another tenant cannot read it.
+- [ ] **S13-03 Add the `delivery` module (SMTP and Webhook channels)** · shared
+  In the same `shared/reporting` process (schema `delivery`): Kafka consumer on `ff.logistics.reporting.report-ready` (group `reporting-delivery`, DLT `….reporting-delivery.dlt`), idempotent per `(reportId, channel)`. Tenant channel preferences (`GET/PUT /api/v1/reports/channels`) for email via Mailpit SMTP (`mailpit:1025`) and HTTP webhook with retry and DLT. OpenTelemetry propagates `traceparent` through Kafka so producer and consumer spans join in one trace.
+  Done when: generating a monthly report delivers an email to Mailpit and posts to a webhook, a failing delivery retries and lands on the DLT, and Jaeger shows both producer and consumer spans under one trace.
+- [ ] **S13-04 Deploy `reporting` and publish its image** · shared, runtime
+  Values in `shared/deploy/apps/reporting` (service chart, `ff_reporting` database Job, `TRACING_OTLP_ENDPOINT`, analytics reader / RustFS / Kafka / Mailpit settings), CI build and GHCR publish in `shared`, and the multi-source `reporting` Application in `runtime`.
+  Done when: `reporting` is Healthy and Synced in Argo CD and runs identically whichever implementation is active behind `edge`.
+- [ ] **S13-05 Wire reporting into the console** · shared
+  Proxy `/reporting` in the console's `nginx.conf` to `reporting` (separate from `/api` → `edge:8081`, like `/identity`). Add monthly PDF generation, report history/download and delivery channel settings to the console report page, and add `reporting` to the admin Jaeger service list.
+  Done when: a signed-in planner generates and downloads a monthly PDF on `http://localhost:8090`, sees the email in Mailpit, and opens the trace in Jaeger.
+- [ ] **S13-06 Write the first run** · docs
+  `try-reporting.adoc`: monthly PDF generation, RustFS download, Mailpit delivery, producer + consumer spans in Jaeger, and verification across a switch.
+
+## S14 — Multi-cluster, Workflows and Events
 
 Outline; detailed when it starts.
 
-- A staging cluster, promotion by commit, the monthly rollup as a CronWorkflow, a workflow started by a Kafka event.
+- A staging cluster, promotion by commit, the monthly rollup (and monthly report trigger) as CronWorkflows, a workflow started by a Kafka event.
 
-## S10–S11 — Partner gateways, after S13
+## S15–S16 — Partner gateways, after S14
 
 Built once, against the edge. They do not care which side is active. The field names, the leg chain and `DEPARTED` → `IN_TRANSIT` are written down with the review that deferred this work.
 
-- **S10 Partner gateway: Northfield**: inbox and outbox, OAuth2 and REST in, SOAP status out, one instance per round.
-- **S11 Partner gateway: Corvane**: EDIFACT over SFTP with Camel, CONTRL before acceptance.
+- **S15 Partner gateway: Northfield**: inbox and outbox, OAuth2 and REST in, SOAP status out, one instance per round.
+- **S16 Partner gateway: Corvane**: EDIFACT over SFTP with Camel, CONTRL before acceptance.

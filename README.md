@@ -8,7 +8,7 @@ That makes the comparison concrete. The same request, the same data and the same
 
 > **Live Documentation Site:** [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/) · **Author:** [Fatih Fetih (LinkedIn)](https://www.linkedin.com/in/fatihfetih/)
 >
-> **Status:** **S0–S9 + S12 complete** — both implementations (`modulith` and `services`), measured k6 benchmarks & failure drills (S7), Apache Superset with PostgreSQL `FORCE RLS` & guest tokens (S8), the single-origin Console UI on `:8090` (S9), and OpenTelemetry + Jaeger 2.4 distributed tracing on `:16686` (S12) are running on the cluster. Next: S13 (multi-cluster + Argo Workflows/Events), then S10–S11 (partner gateways). See [backlog.md](backlog.md).
+> **Status:** **S0–S9 + S12 complete** — both implementations (`modulith` and `services`), measured k6 benchmarks & failure drills (S7), Apache Superset with PostgreSQL `FORCE RLS` & guest tokens (S8), the single-origin Console UI on `:8090` (S9), and OpenTelemetry + Jaeger 2.4 distributed tracing on `:16686` (S12) are running on the cluster. Next: S13 (reporting & notification), S14 (multi-cluster + Argo Workflows/Events), then S15–S16 (partner gateways: Northfield, Corvane). See [backlog.md](backlog.md).
 
 ### Measured highlights ([full comparison](https://ffetih.github.io/ff-logistic-docs/ff-logistic/comparison.html))
 
