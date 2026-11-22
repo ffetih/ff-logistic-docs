@@ -427,10 +427,10 @@ image::argocd/console.png[console: Service and single-pod nginx Deployment servi
 | What | When
 
 | *Argo Workflows*, *Argo Events*: jobs as workflows, started by an event (a Kafka message)
-| S13: the monthly rollup as a CronWorkflow, a workflow started by a Kafka event
+| S14: the monthly rollup (and monthly report trigger) as CronWorkflows, a workflow started by a Kafka event
 
 | *More than one cluster*: a staging cluster, promotion by commit
-| S13
+| S14
 
 | *Automated sync for the workloads*
 | Possible once releases are routine; the canary already guards each one

@@ -123,7 +123,7 @@ image::tracing/jaeger-routing-plan.png[Jaeger UI showing distributed trace 563b6
 | *Architect review (5 min)* | xref:architecture.adoc[Architecture] → xref:comparison.adoc[Comparison] → xref:security.adoc[Security & Multi-Tenancy] → xref:decisions.adoc[Decisions]
 | *DevOps & GitOps review* | xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:switching.adoc[Switching sides]
 | *Try it yourself* | xref:runtime::cluster-guide.adoc[Cluster guide] → xref:walkthrough.adoc#collection[Walkthrough + Postman / IntelliJ HTTP collection]
-| *Roadmap* | xref:plan.adoc[Plan] (S0–S9 completed; S10–S13 partner gateways, tracing, multi-cluster)
+| *Roadmap* | xref:plan.adoc[Plan] (S0–S9 & S12 completed; S13 reporting & notification, S14 multi-cluster/workflows, S15–S16 partner gateways)
 |===
 
 The code lives across six repositories under https://github.com/ffetih?tab=repositories&q=ff-logistic[github.com/ffetih], all named `ff-logistic-*`.
