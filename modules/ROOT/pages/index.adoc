@@ -55,6 +55,11 @@ Pod delete to last pod Ready on both sides, with zero-downtime canary rollouts a
 ****
 --
 
+[quote]
+____
+_Bottom line:_ start with a *modular monolith* (~40% less idle RAM, ~37% lower cross-area latency, single-rollout changes); _earn your microservices when independent scaling, fault isolation, or team autonomy actually demands the cost_ (xref:comparison.adoc#takeaway[read the full verdict]).
+____
+
 == Engineering scope
 
 [.pillar-grid]
