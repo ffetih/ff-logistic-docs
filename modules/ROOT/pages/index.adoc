@@ -166,7 +166,7 @@ Inspect declarative GitOps, single-commit architecture switching, canary rollout
 
 * *Core reading path:* xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:runtime::cluster-guide.adoc[Cluster Guide] → xref:switching.adoc[Switching Sides]
 * *Observability & drills:* xref:try-tracing.adoc[Distributed Tracing (Jaeger 2.4)], xref:try-workflows.adoc[Workflows, events and promotion], xref:try-load.adoc[k6 Load & Failure Drills]
-* *Roadmap:* xref:plan.adoc[Plan] — S0–S9, S12 and S13 complete; S14's first run is written; S15–S16 partner gateways follow the S14 tag.
+* *Roadmap:* xref:plan.adoc[Plan] — closed at S14 (2026-11-23). S15–S16 stay on the plan and are not started.
 ====
 
 [[role-enduser]]
