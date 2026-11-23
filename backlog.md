@@ -393,19 +393,23 @@ Rules for this sprint:
 - **A service token cannot ask for a report.** `POST /service-tokens` has no tenant. The workflow signs in as `nexus.planner`, the same call the smoke tests use, and sends that access token.
 - **Staging is a second k3d cluster, not a second Superset.** `ff-logistic-staging` has its own host ports. It runs Argo CD and the Application being promoted. Promotion is a commit in runtime that sets the `ff-logistic` Application's `targetRevision` to the SHA staging has already synced. No image is rebuilt by that commit.
 
-- [ ] **S14-01 Install Argo Workflows and Argo Events** · runtime
+- [x] **S14-01 Install Argo Workflows and Argo Events** · runtime
   Both controllers on `ff-logistic`, each an Application under `deploy/argocd/apps`, in their own namespaces. No workflow and no event source in this item.
   Done when: both Applications are Healthy and Synced, and one hand-submitted Workflow reaches `Succeeded`.
-- [ ] **S14-02 Close the month with a CronWorkflow** · shared, runtime
+  Merged in `runtime` (`3d01b13` / PR #28). Workflows 4.1.6 in `argo`, Events 1.9.11 in `argo-events`. Hand-submitted `s14-hello` (`busybox:1.36`, not in Git) reached `Succeeded` and printed `ok` at `2026-11-23T05:39:03Z`.
+- [x] **S14-02 Close the month with a CronWorkflow** · shared, runtime
   The loader exposes one POST that runs the existing recount (`MonthlyDeliveryRollup`). The loader already requires an authenticated caller and checks no role, so the workflow uses the `nexus.planner` token for this call and for reporting. A CronWorkflow in the workflows namespace calls the recount, then calls reporting for that month. Local values set a short schedule and the month `2026-11`, so a run is visible without waiting for the next month. The in-process five-minute schedule is unchanged.
   Done when: one run finishes `Succeeded`, November's `tenant_delivery_monthly` row is unchanged (`7412`, `88067.350`, `7772.400`), reporting answers `200` for `2026-11`, and Mailpit still has the one message from S13.
-- [ ] **S14-03 Start a workflow from the report-ready event** · runtime
+  Merged in `shared` (`93f1bb6` / PR #26) and `runtime` (`8a6f3eb` / PR #29, schedules `a7b7f1c` / PR #30, service names `335c261` / PR #31). `month-close-1795414320` reached `Succeeded` with `ok recount {"tenantMonths":0}` and `ok report 200`. November stayed `7412`, `88067.350`, `7772.400`. Mailpit was already at 0 messages (in-memory store, pod started `2026-11-23T05:11:54Z`) and stayed at 0; the run sent nothing (2026-11-23).
+- [x] **S14-03 Start a workflow from the report-ready event** · runtime
   An EventSource on `ff.logistics.reporting.report-ready` and a Sensor that submits one Workflow. The workflow logs the object key and exits. It does not fetch the PDF and does not send mail.
   Done when: one new message on that topic starts one Workflow, and the delivery consumer's lag stays 0.
-- [ ] **S14-04 Add a staging cluster and promote by commit** · runtime
+  Merged in `runtime` (`ec49bb2` / PR #32, controller defaults `adeea7b` / PR #33). Republishing report `a9954d60-eaea-43a9-a525-1fb21819c6ea` started `report-ready-v489g`, which printed `object-key ff-eu-freight/report/2026-11/monthly.pdf` at `2026-11-23T06:37:18Z`. `reporting-delivery` partition 1 stayed current-offset 2, log-end 2, lag 0. Mailpit stayed at 0.
+- [x] **S14-04 Add a staging cluster and promote by commit** · runtime
   `deploy/cluster/k3d-staging.yaml` creates `ff-logistic-staging` with host ports that do not overlap `ff-logistic`. Argo CD there syncs the Application chosen for the promotion. A commit in runtime then sets that Application's `targetRevision` on `ff-logistic` to the same SHA.
   Done when: staging is Healthy on that SHA, `ff-logistic` follows only after the promotion commit, and no publish workflow runs for the commit.
-- [ ] **S14-05 Write the first run** · docs
+  Merged in `runtime` (`cb79bd0` / PR #34, staging Application `80a0119` / PR #35, promotion `4d3441a` / PR #36). The Application is mailpit. Staging was Healthy on `cb79bd0913230cddc133c33211b16e2f70772721` while `ff-logistic` stayed on `adeea7b72da6f8577fd255204fbd89390c0f522b`. After PR #36 both are Synced and Healthy on that candidate. The promotion run is Render manifests `45127959350`; no image was published (2026-11-23).
+- [x] **S14-05 Write the first run** · docs
   `try-workflows.adoc`: the hand-submitted Workflow, the November CronWorkflow run (200, no second mail), the event-started Workflow, and the promotion commit. After the cluster has shown them.
 
 ## S15–S16 — Partner gateways, after S14

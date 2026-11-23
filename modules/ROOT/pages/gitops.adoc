@@ -422,15 +422,11 @@ image::argocd/console.png[console: Service and single-pod nginx Deployment servi
 [[not-yet]]
 == Not used yet
 
+Argo Workflows 4.1.6, Argo Events 1.9.11 and promotion from `ff-logistic-staging` ran on 2026-11-23 (xref:try-workflows.adoc[the first run]).
+
 [cols="2,3",options="header"]
 |===
 | What | When
-
-| *Argo Workflows*, *Argo Events*: jobs as workflows, started by an event (a Kafka message)
-| S14: the monthly rollup (and monthly report trigger) as CronWorkflows, a workflow started by a Kafka event
-
-| *More than one cluster*: a staging cluster, promotion by commit
-| S14
 
 | *Automated sync for the workloads*
 | Possible once releases are routine; the canary already guards each one

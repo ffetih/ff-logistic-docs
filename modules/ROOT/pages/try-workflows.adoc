@@ -1,0 +1,105 @@
+= Try it: workflows, events and promotion
+:description: S14 as numbered steps: a hand-submitted Workflow, the November CronWorkflow, a workflow started by report-ready, and promotion of mailpit from a second k3d cluster.
+
+S14 puts the monthly close and a Kafka-started workflow on Argo, and promotes one Application from a second cluster by a commit. Reporting stays the one `shared/reporting` process from S13. The five-minute recount inside the loader stays; the CronWorkflow is the calendar-month close.
+
+The figures below are from the first live run on 2026-11-23 (`ff-eu-freight`, November 2026).
+
+[mermaid]
+....
+flowchart LR
+  CRON["CronWorkflow month-close\nnamespace argo"] --> ID["identity.ff-logistics.svc:8085"]
+  CRON --> LD["analytics-loader.ff-logistics.svc:8086\nPOST /api/v1/rollups"]
+  CRON --> RP["reporting.ff-logistics.svc:8089\nPOST /api/v1/reports/monthly"]
+  RP -->|"new report only"| KF["Kafka\nff.logistics.reporting.report-ready"]
+  KF --> DEL["delivery\nreporting-delivery"]
+  KF --> ES["EventSource + Sensor\nnamespace ff-logistics"]
+  ES --> WF["Workflow report-ready-\nlogs the object key"]
+....
+
+* *Workflows 4.1.6* in namespace `argo`, *Events 1.9.11* in namespace `argo-events`. Neither publishes a host port. `argo-server` stays ClusterIP `2746`.
+* The CronWorkflow signs in as `nexus.planner`. A service token has no tenant and cannot ask for a report.
+* An existing month returns `200` and publishes nothing, so a second run does not mail. `delivery` remains the only sender.
+* The event workflow logs the object key and exits. The PDF stays in RustFS.
+
+[[controllers]]
+== 1. The controllers, then one hand-submitted Workflow
+
+`ff-root` creates `argo-workflows` and `argo-events` (`deploy/argocd/apps`, project `default`, server-side apply). Sync both, then submit one Workflow that is not in Git. It uses the `default` service account in `argo`.
+
+[source,bash]
+----
+argocd app sync argo-workflows argo-events
+argocd app wait argo-workflows argo-events --health --timeout 180
+kubectl apply -f - <<'EOF'
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  name: s14-hello
+  namespace: argo
+spec:
+  entrypoint: hello
+  templates:
+    - name: hello
+      container:
+        image: busybox:1.36
+        command: [echo, ok]
+EOF
+kubectl -n argo logs -l workflows.argoproj.io/workflow=s14-hello
+----
+
+✅ On 2026-11-23 both Applications were Healthy. `s14-hello` reached `Succeeded` at `2026-11-23T05:39:03Z` and printed `ok`. The controllers were installed from runtime `3d01b13` (https://github.com/ffetih/ff-logistic-runtime/pull/28[PR #28]).
+
+[[month]]
+== 2. Close November without a second mail
+
+The CronWorkflow `month-close` lives in `deploy/platform/month-close`. Local values schedule it `*/2 * * * *` UTC and set the month to `2026-11`. Each run signs in, `POST`s `/api/v1/rollups`, then `POST`s `/api/v1/reports/monthly`. The curl image does not resolve a `*.svc.cluster.local` name, so the URLs are `http://identity.ff-logistics.svc:8085`, `http://analytics-loader.ff-logistics.svc:8086` and `http://reporting.ff-logistics.svc:8089`.
+
+[source,bash]
+----
+argocd app sync month-close
+kubectl -n argo get cronworkflow month-close
+kubectl -n argo get workflows
+kubectl -n argo logs -l workflows.argoproj.io/workflow=<name>
+----
+
+✅ The first `Succeeded` run was `month-close-1795414320`. Its log was:
+
+----
+ok   sign-in
+ok   recount {"tenantMonths":0}
+ok   report 200
+----
+
+History keeps three successes, so that object is no longer on the cluster. `month-close-1795417800` at `2026-11-23T07:10:01Z` prints the same three lines. `tenant_delivery_monthly` for `ff-eu-freight` / `2026-11-01` is still `7412`, `88067.350`, `7772.400`. Mailpit (`http://localhost:8092`) stayed at 0 messages and `SMTPAccepted` 0: the store is in memory, the S13 message was already gone when the pod restarted at `2026-11-23T05:11:54Z`, and this run did not send one. The recount `POST` is shared `93f1bb6` (https://github.com/ffetih/ff-logistic-shared/pull/26[PR #26]). The CronWorkflow's service names landed in runtime `335c261` (https://github.com/ffetih/ff-logistic-runtime/pull/31[PR #31]).
+
+[[event]]
+== 3. A workflow from report-ready
+
+`deploy/platform/report-ready` runs in `ff-logistics`, because the broker advertises `kafka-0.kafka:9092` and that name resolves there. The EventSource consumes `ff.logistics.reporting.report-ready` from the end. The Sensor starts a Workflow named `report-ready-` whose only step echoes the object key.
+
+[source,bash]
+----
+argocd app sync report-ready
+kubectl -n ff-logistics get workflows
+kubectl -n ff-logistics logs -l workflows.argoproj.io/workflow=report-ready-v489g
+----
+
+✅ On 2026-11-23 the existing report `a9954d60-eaea-43a9-a525-1fb21819c6ea` was published again (partition 1). Workflow `report-ready-v489g` reached `Succeeded` at `2026-11-23T06:37:18Z` and printed `object-key ff-eu-freight/report/2026-11/monthly.pdf`. Group `reporting-delivery` on that partition is current-offset 2, log-end 2, lag 0. `delivery.sent_delivery` already had this report on channel `email`, so delivery did not send again. Mailpit stayed at 0. The Sensor manifest is runtime `adeea7b` (https://github.com/ffetih/ff-logistic-runtime/pull/33[PR #33]).
+
+[[promotion]]
+== 4. Promote mailpit from the staging cluster
+
+`deploy/cluster/k3d-staging.yaml` creates `ff-logistic-staging` and publishes host port `18080` to Argo CD's NodePort `30080`. `ff-logistic` keeps `8080`. Staging installs Argo CD from `deploy/argocd/staging`, which has no `ff-root`, then applies `deploy/argocd/apps/project-ff-logistics.yaml` and `deploy/cluster/staging-mailpit.yaml`. That Application is mailpit at one SHA. Staging does not run Superset.
+
+Pass `--server` so the CLI does not mix the two Argo CD servers (`localhost:8080` and `127.0.0.1:18080`). `k3d` switches kubectl to `k3d-ff-logistic-staging` on create; `k3d-ff-logistic` is the other context.
+
+[source,bash]
+----
+kubectl --context k3d-ff-logistic -n argocd get application mailpit \
+  -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
+kubectl --context k3d-ff-logistic-staging -n argocd get application mailpit \
+  -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
+----
+
+✅ Staging synced `cb79bd0913230cddc133c33211b16e2f70772721` and was Healthy (https://github.com/ffetih/ff-logistic-runtime/pull/34[PR #34], https://github.com/ffetih/ff-logistic-runtime/pull/35[PR #35]). `ff-logistic` mailpit stayed on `adeea7b72da6f8577fd255204fbd89390c0f522b` until the promotion commit. That commit, runtime `4d3441ab527788b7527cbcac762877259680beeb` (https://github.com/ffetih/ff-logistic-runtime/pull/36[PR #36]), changes only this Application's `targetRevision`. Its GitHub run is `Render manifests` (`45127959350`) and no other repository published an image. After the sync both clusters are `Synced` `Healthy` on `cb79bd0913230cddc133c33211b16e2f70772721`. `ff-logistic` mailpit no longer follows `main`; a later mailpit change waits for another promotion commit.

@@ -412,6 +412,13 @@ What exists: one `shared/reporting` process (`generation` + `delivery` Spring Mo
 
 The steps: xref:try-reporting.adoc[Try it: monthly PDF reports and notifications].
 
+[[s14]]
+== S14: workflows, events and promotion
+
+What exists: Argo Workflows 4.1.6 in namespace `argo` and Argo Events 1.9.11 in namespace `argo-events`. CronWorkflow `month-close` signs in as `nexus.planner`, recounts, then asks reporting for `2026-11`. An EventSource in `ff-logistics` starts a workflow from `ff.logistics.reporting.report-ready` that logs the object key. `ff-logistic-staging` is a second k3d cluster (Argo CD on `18080`, mailpit only). What it showed, on 2026-11-23: `s14-hello` printed `ok`; `month-close` answered `200` and left November at `7412`, `88067.350`, `7772.400` with Mailpit still at 0 messages; `report-ready-v489g` printed `object-key ff-eu-freight/report/2026-11/monthly.pdf` with `reporting-delivery` lag 0; mailpit on staging was Healthy on `cb79bd0` while `ff-logistic` stayed on `adeea7b` until promotion commit `4d3441a`.
+
+The steps: xref:try-workflows.adoc[Try it: workflows, events and promotion].
+
 [[collection]]
 == The same calls, as a collection
 
