@@ -18,9 +18,55 @@ flowchart LR
 ....
 
 * *Workflows 4.1.6* in namespace `argo`, *Events 1.9.11* in namespace `argo-events`. Neither publishes a host port. `argo-server` stays ClusterIP `2746`.
-* The CronWorkflow signs in as `nexus.planner`. A service token has no tenant and cannot ask for a report.
+* The CronWorkflow runs under its own `month-close` ServiceAccount and signs in as `nexus.planner` (`LOGISTICS_PLANNER` / `TENANT_ADMIN`, enforced by `@PreAuthorize` on both `POST /api/v1/rollups` and `POST /api/v1/reports/monthly`). When `month` is left empty (the production `0 6 1 * *` schedule), the script automatically resolves the previous UTC calendar month.
 * An existing month returns `200` and publishes nothing, so a second run does not mail. `delivery` remains the only sender.
-* The event workflow logs the object key and exits. The PDF stays in RustFS.
+* The event workflow runs under a dedicated `workflow-runner` ServiceAccount (keeping the `default` ServiceAccount in `ff-logistics` free of workflow RBAC), reads from an authenticated NATS `EventBus` (`auth: token`), logs the object key, and exits. The PDF stays in RustFS.
+
+== End-to-end sequence: monthly close and event-driven workflow
+
+[plantuml,s14-workflows-sequence,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+participant "CronWorkflow\nmonth-close\n(namespace: argo)" as cron
+participant "identity\n:8085" as id
+participant "analytics-loader\n:8086" as ld
+participant "reporting\n:8089" as rep
+queue "Kafka\nff.logistics.reporting.\nreport-ready" as kf
+participant "delivery\n(group: reporting-delivery)" as del
+box "Argo Events (namespace: ff-logistics)" #f8fafc
+  participant "EventSource\n(group: report-ready-events)" as es
+  participant "NATS EventBus\n(auth: token)" as bus
+  participant "Sensor\nreport-ready" as sen
+end box
+participant "Workflow\nreport-ready-*\n(SA: workflow-runner)" as wf
+
+cron -> id : POST /sessions (nexus.planner)
+id --> cron : Bearer JWT (tenant_id + roles)
+cron -> ld : POST /api/v1/rollups
+note right of ld : @PreAuthorize\nLOGISTICS_PLANNER / TENANT_ADMIN
+ld --> cron : 200 {"tenantMonths": 0}
+cron -> rep : POST /api/v1/reports/monthly {"month": "2026-11"}
+alt month already exists
+  rep --> cron : 200 OK (no event published, no second mail)
+else new month created
+  rep --> cron : 201 Created
+  rep -> kf : ReportReady (objectKey Claim Check)
+  par independent consumer groups
+    kf -> del : group reporting-delivery
+    del -> del : idempotent sent_delivery → Mailpit / Webhook
+  else
+    kf -> es : group report-ready-events
+    es -> bus : publish event
+    bus -> sen : trigger k8s Workflow create
+    sen -> wf : submit Workflow (object-key parameter)
+    wf -> wf : echo object-key → Succeeded
+  end
+end
+@enduml
+....
 
 [[controllers]]
 == 1. The controllers, then one hand-submitted Workflow
@@ -91,6 +137,35 @@ kubectl -n ff-logistics logs -l workflows.argoproj.io/workflow=report-ready-v489
 == 4. Promote mailpit from the staging cluster
 
 `deploy/cluster/k3d-staging.yaml` creates `ff-logistic-staging` and publishes host port `18080` to Argo CD's NodePort `30080`. `ff-logistic` keeps `8080`. Staging installs Argo CD from `deploy/argocd/staging`, which has no `ff-root`, then applies `deploy/argocd/apps/project-ff-logistics.yaml` and `deploy/cluster/staging-mailpit.yaml`. That Application is mailpit at one SHA. Staging does not run Superset.
+
+[plantuml,s14-multicluster-promotion,svg]
+....
+@startuml
+skinparam shadowing false
+skinparam componentStyle rectangle
+skinparam rectangle {
+  BackgroundColor #f8fafc
+  BorderColor #0f241d
+}
+
+component "Git: ff-logistic-runtime\ncandidate SHA cb79bd0" as git1
+rectangle "ff-logistic-staging (Argo CD :18080)\nno Superset, no ff-root" as stg {
+  component "staging-mailpit.yaml\ntargetRevision: cb79bd0" as stgapp
+  component "mailpit pod\nSynced & Healthy" as stgpod
+}
+component "Promotion PR #36 (4d3441a)\nchanges ONLY targetRevision\nCI: Render manifests (no image build)" as promo
+rectangle "ff-logistic (Argo CD :8080)\nfull platform + active switch" as prod {
+  component "deploy/argocd/apps/mailpit.yaml\nadeea7b → cb79bd0" as prodapp
+  component "mailpit pod\nSynced & Healthy" as prodpod
+}
+
+git1 --> stgapp : 1. pin candidate SHA
+stgapp --> stgpod : 2. verify Healthy on staging
+stgpod ..> promo : 3. approved for promotion
+promo --> prodapp : 4. update targetRevision only
+prodapp --> prodpod : 5. sync ff-logistic to same SHA
+@enduml
+....
 
 Pass `--server` so the CLI does not mix the two Argo CD servers (`localhost:8080` and `127.0.0.1:18080`). `k3d` switches kubectl to `k3d-ff-logistic-staging` on create; `k3d-ff-logistic` is the other context.
 
