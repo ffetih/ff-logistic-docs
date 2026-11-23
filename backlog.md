@@ -411,6 +411,8 @@ Rules for this sprint:
   Merged in `runtime` (`cb79bd0` / PR #34, staging Application `80a0119` / PR #35, promotion `4d3441a` / PR #36). The Application is mailpit. Staging was Healthy on `cb79bd0913230cddc133c33211b16e2f70772721` while `ff-logistic` stayed on `adeea7b72da6f8577fd255204fbd89390c0f522b`. After PR #36 both are Synced and Healthy on that candidate. The promotion run is Render manifests `45127959350`; no image was published (2026-11-23).
 - [x] **S14-05 Write the first run** · docs
   `try-workflows.adoc`: the hand-submitted Workflow, the November CronWorkflow run (200, no second mail), the event-started Workflow, and the promotion commit. After the cluster has shown them.
+- [x] **S14-06 Harden S14 RBAC, NATS auth, automatic month close, diagrams and API collections** · shared, runtime, docs
+  Restrict `POST /api/v1/rollups` to `LOGISTICS_PLANNER` and `TENANT_ADMIN` (`RollupControllerTest` covers `401`/`403`/`200`). Give `report-ready` Workflows a dedicated `workflow-runner` ServiceAccount (leaving `ff-logistics`'s `default` account unprivileged), tighten Sensor/EventSource RBAC to least privilege, enable NATS `auth: token`, run `month-close` under its own `month-close` ServiceAccount and auto-resolve the previous UTC month when `month` is empty. Add PlantUML workflow sequence & multi-cluster promotion diagrams to `try-workflows.adoc`, update `README.md`, and add `POST /api/v1/rollups` to the Postman and IntelliJ HTTP collections.
 
 ## S15–S16 — Partner gateways, after S14
 

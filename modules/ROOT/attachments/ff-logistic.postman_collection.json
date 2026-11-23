@@ -1,7 +1,7 @@
 {
   "info": {
-    "name": "FF Logistic — E2E Walkthrough (S1-S13)",
-    "description": "FF Logistic uçtan uca API akışı (S1 -> S13): Identity, Warehousing (WMS), Transportation (TMS + Flow 1 & Flow 2), Routing (GEO + Flow 3), RustFS Documents (e-CMR / e-POD), Superset Multi-Tenant RLS ve Reporting & Notification (aylık PDF, teslimat kanalları, Mailpit).\n\nHem Modulith hem Services tarafında birebir aynı URL'lerle (edge :8081) çalışır. İstekleri sırayla çalıştırın; tüm token ve ID'ler otomatik olarak collection variable'larına kaydedilir.",
+    "name": "FF Logistic — E2E Walkthrough (S1-S14)",
+    "description": "FF Logistic uçtan uca API akışı (S1 -> S14): Identity, Warehousing (WMS), Transportation (TMS + Flow 1 & Flow 2), Routing (GEO + Flow 3), RustFS Documents (e-CMR / e-POD), Superset Multi-Tenant RLS, Reporting & Notification (S13) ve Analytics Rollup Trigger (S14).\n\nHem Modulith hem Services tarafında birebir aynı URL'lerle (edge :8081) çalışır. İstekleri sırayla çalıştırın; tüm token ve ID'ler otomatik olarak collection variable'larına kaydedilir.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "variable": [
@@ -1206,6 +1206,54 @@
           "request": {
             "method": "GET",
             "url": "{{mailpit}}/api/v1/messages"
+          }
+        }
+      ]
+    },
+    {
+      "name": "9. Analytics Rollup Trigger (S14)",
+      "description": "Argo CronWorkflow month-close'un ay kapanışında çağırdığı recount ucu (analytics-loader :8086). LOGISTICS_PLANNER veya TENANT_ADMIN rolü gerektirir.",
+      "item": [
+        {
+          "name": "9.1 Negative Test: Unauthenticated Rollup -> 401",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated rollup refused (401)', () => pm.response.to.have.status(401));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "url": "{{analytics}}/api/v1/rollups"
+          }
+        },
+        {
+          "name": "9.2 Trigger Monthly Rollup Recount (Planner)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Rollup recount succeeded (200)', () => {",
+                  "  pm.response.to.have.status(200);",
+                  "  pm.expect(pm.response.json().tenantMonths).to.be.a('number');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{euToken}}" }
+            ],
+            "url": "{{analytics}}/api/v1/rollups"
           }
         }
       ]

@@ -1,4 +1,4 @@
-# FF Logistic — Uçtan Uca (E2E) API Akışı (S1 -> S13)
+# FF Logistic — Uçtan Uca (E2E) API Akışı (S1 -> S14)
 # ==============================================================================
 # Kullanım:
 #   IntelliJ IDEA'da sağ üstten ortam olarak "local" seçin (http-client.env.json).
@@ -793,4 +793,28 @@ GET {{mailpit}}/api/v1/messages
 
 > {%
     client.test("Mailpit inbox queried", () => client.assert(response.status === 200, "Expected 200"));
+%}
+
+################################################################################
+### 9. ANALYTICS ROLLUP TRIGGER (S14 — analytics-loader :8086)
+# CronWorkflow month-close'un ay kapanışında çağırdığı recount ucu.
+# LOGISTICS_PLANNER veya TENANT_ADMIN rolü ister; değişen ay yoksa tenantMonths: 0 döner.
+################################################################################
+
+### 9.1 Negatif Güvenlik Testi: Token olmadan recount isteği -> 401 Unauthorized
+POST {{analytics}}/api/v1/rollups
+
+> {%
+    client.test("Unauthenticated rollup refused with 401", () => client.assert(response.status === 401, "Expected 401"));
+%}
+
+### 9.2 Aylık rollup recount tetikle (nexus.planner — LOGISTICS_PLANNER)
+POST {{analytics}}/api/v1/rollups
+Authorization: Bearer {{euToken}}
+
+> {%
+    client.test("Rollup recount succeeded (200)", () => {
+        client.assert(response.status === 200, "Expected 200");
+        client.assert(typeof response.body.tenantMonths === "number", "Expected numeric tenantMonths");
+    });
 %}
