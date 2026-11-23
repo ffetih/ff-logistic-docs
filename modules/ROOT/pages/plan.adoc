@@ -20,7 +20,7 @@ The work goes in sprints. Each sprint is one pull request in every repository it
 | S9 Console | shared, runtime, docs | One origin on 8090: sign-in, warehouse, shipment, route map, documents, embedded monthly dashboard
 | S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader
 | S13 Reporting and notification | shared, runtime, docs | One `shared/reporting` process (`generation` + `delivery`): in-process HTML→PDF from `tenant_delivery_monthly`, RustFS Claim Check, Kafka `report-ready`, Mailpit/webhook delivery
-| S14 Multi-cluster, Workflows and Events | shared, runtime, docs | Argo Workflows and Events on `ff-logistic`. A CronWorkflow closes the month. A Kafka message starts a workflow. A second k3d cluster promotes by commit |
+| S14 Multi-cluster, Workflows and Events | shared, runtime, docs | Workflows and Events on the cluster, a monthly CronWorkflow, a Kafka-started workflow, promotion from a second k3d cluster |
 | S15–S16 Partner gateways | shared, runtime | S15 Northfield, then S16 Corvane. After S14
 |===
 
