@@ -8,7 +8,7 @@ That makes the comparison concrete. The same request, the same data and the same
 
 > **Live Documentation Site:** [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/) · **Author:** [Fatih Fetih (LinkedIn)](https://www.linkedin.com/in/fatihfetih/)
 >
-> **Status:** **S0–S9 + S12–S14 complete** — both implementations (`modulith` and `services`), measured k6 benchmarks & failure drills (S7), Apache Superset with PostgreSQL `FORCE RLS` & guest tokens (S8), the single-origin Console UI on `:8090` (S9), OpenTelemetry + Jaeger 2.4 distributed tracing on `:16686` (S12), single-process `shared/reporting` with Mailpit on `:8092` (S13), and Argo Workflows 4.1 / Argo Events 1.9 + multi-cluster promotion from `ff-logistic-staging` (S14) are running on the cluster. Next: S15–S16 (partner gateways: Northfield, Corvane). See [backlog.md](backlog.md).
+> **Status:** **Closed at S14** (2026-11-23). Both implementations (`modulith` and `services`), the measured comparison (S7), Superset (S8), the console on `:8090` (S9), Jaeger on `:16686` (S12), `shared/reporting` with Mailpit on `:8092` (S13), and Argo Workflows, Argo Events and promotion from `ff-logistic-staging` (S14) are on the cluster. Tag `s14` is on shared, runtime and docs. base, modulith and services stay at `s12`. S15–S16 (Northfield, Corvane) stay on the plan and are not started. S06-05, S06-06, S07-03 and S07-06 stay open. See [backlog.md](backlog.md).
 
 ### Measured highlights ([full comparison](https://ffetih.github.io/ff-logistic-docs/ff-logistic/comparison.html))
 

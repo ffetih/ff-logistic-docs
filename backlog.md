@@ -63,7 +63,7 @@ The reference cluster `ff-logistics` uses the same host ports: only one of the t
 | S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader. |
 | S13 Reporting and notification | shared, runtime, docs | One `shared/reporting` process (`generation` + `delivery`): in-process HTML→PDF from `tenant_delivery_monthly`, RustFS Claim Check, Kafka `report-ready`, Mailpit/webhook delivery, traced in Jaeger. |
 | S14 Multi-cluster, Workflows and Events | shared, runtime, docs | Argo Workflows and Events on `ff-logistic`. A CronWorkflow closes the month. A Kafka message starts a workflow. Staging promotes by a commit. |
-| S15–S16 Partner gateways | shared, runtime | S15 Northfield, then S16 Corvane. After S14. |
+| S15–S16 Partner gateways | shared, runtime | Not started. Left on the plan at the S14 close (2026-11-23). |
 
 ---
 
@@ -415,6 +415,8 @@ Rules for this sprint:
   Restrict `POST /api/v1/rollups` to `LOGISTICS_PLANNER` and `TENANT_ADMIN` (`RollupControllerTest` covers `401`/`403`/`200`). Give `report-ready` Workflows a dedicated `workflow-runner` ServiceAccount (leaving `ff-logistics`'s `default` account unprivileged), tighten Sensor/EventSource RBAC to least privilege, enable NATS `auth: token`, run `month-close` under its own `month-close` ServiceAccount and auto-resolve the previous UTC month when `month` is empty. Add PlantUML workflow sequence & multi-cluster promotion diagrams to `try-workflows.adoc`, update `README.md`, and add `POST /api/v1/rollups` to the Postman and IntelliJ HTTP collections.
 
 ## S15–S16 — Partner gateways, after S14
+
+Left unstarted at the close on 2026-11-23. Tag `s14` is on shared (`a8774b0`), runtime (`59e6344`) and docs (`be98f19`). base, modulith and services stay at `s12`.
 
 Built once, against the edge. They do not care which side is active. The field names, the leg chain and `DEPARTED` → `IN_TRANSIT` are written down with the review that deferred this work.
 
