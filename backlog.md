@@ -62,7 +62,7 @@ The reference cluster `ff-logistics` uses the same host ports: only one of the t
 | S9 Console | shared, runtime | One origin on 8090. Sign-in, warehouse, shipment, routes, the monthly dashboard. |
 | S12 Tracing | shared, modulith, services, runtime, docs | Jaeger on 16686. One trace from the console through the active side and Kafka into the loader. |
 | S13 Reporting and notification | shared, runtime, docs | One `shared/reporting` process (`generation` + `delivery`): in-process HTML→PDF from `tenant_delivery_monthly`, RustFS Claim Check, Kafka `report-ready`, Mailpit/webhook delivery, traced in Jaeger. |
-| S14 Multi-cluster, Workflows and Events | shared, runtime | A staging cluster, promotion by commit, the monthly rollup and report run as CronWorkflows, a workflow started by Kafka. |
+| S14 Multi-cluster, Workflows and Events | shared, runtime, docs | Argo Workflows and Events on `ff-logistic`. A CronWorkflow closes the month. A Kafka message starts a workflow. Staging promotes by a commit. |
 | S15–S16 Partner gateways | shared, runtime | S15 Northfield, then S16 Corvane. After S14. |
 
 ---
@@ -383,9 +383,30 @@ Architecture constraints for this sprint:
 
 ## S14 — Multi-cluster, Workflows and Events
 
-Outline; detailed when it starts.
+Goal: the monthly clock and a Kafka-started workflow live in Argo, and a second cluster receives a commit before `ff-logistic` does. Reporting stays the one process from S13. The switch still does not apply to it.
 
-- A staging cluster, promotion by commit, the monthly rollup (and monthly report trigger) as CronWorkflows, a workflow started by a Kafka event.
+Rules for this sprint:
+
+- **The five-minute recount stays.** `MonthlyDeliveryRollup` keeps `analytics.rollup.cron`. The CronWorkflow is the close of a calendar month, not a second formula and not a replacement of that schedule.
+- **One mail per new report.** The report workflow calls `POST /api/v1/reports/monthly`. A month that already exists returns `200` and publishes nothing, so a second run does not mail again. `delivery` remains the only sender. The workflow does not talk to Mailpit or to a webhook.
+- **The event workflow carries no PDF.** Argo Events watches `ff.logistics.reporting.report-ready` and starts a workflow with the object key. The bytes stay in RustFS. Argo CD Notifications is not the carrier.
+- **A service token cannot ask for a report.** `POST /service-tokens` has no tenant. The workflow signs in as `nexus.planner`, the same call the smoke tests use, and sends that access token.
+- **Staging is a second k3d cluster, not a second Superset.** `ff-logistic-staging` has its own host ports. It runs Argo CD and the Application being promoted. Promotion is a commit in runtime that sets the `ff-logistic` Application's `targetRevision` to the SHA staging has already synced. No image is rebuilt by that commit.
+
+- [ ] **S14-01 Install Argo Workflows and Argo Events** · runtime
+  Both controllers on `ff-logistic`, each an Application under `deploy/argocd/apps`, in their own namespaces. No workflow and no event source in this item.
+  Done when: both Applications are Healthy and Synced, and one hand-submitted Workflow reaches `Succeeded`.
+- [ ] **S14-02 Close the month with a CronWorkflow** · shared, runtime
+  The loader exposes one POST that runs the existing recount (`MonthlyDeliveryRollup`). The loader already requires an authenticated caller and checks no role, so the workflow uses the `nexus.planner` token for this call and for reporting. A CronWorkflow in the workflows namespace calls the recount, then calls reporting for that month. Local values set a short schedule and the month `2026-11`, so a run is visible without waiting for the next month. The in-process five-minute schedule is unchanged.
+  Done when: one run finishes `Succeeded`, November's `tenant_delivery_monthly` row is unchanged (`7412`, `88067.350`, `7772.400`), reporting answers `200` for `2026-11`, and Mailpit still has the one message from S13.
+- [ ] **S14-03 Start a workflow from the report-ready event** · runtime
+  An EventSource on `ff.logistics.reporting.report-ready` and a Sensor that submits one Workflow. The workflow logs the object key and exits. It does not fetch the PDF and does not send mail.
+  Done when: one new message on that topic starts one Workflow, and the delivery consumer's lag stays 0.
+- [ ] **S14-04 Add a staging cluster and promote by commit** · runtime
+  `deploy/cluster/k3d-staging.yaml` creates `ff-logistic-staging` with host ports that do not overlap `ff-logistic`. Argo CD there syncs the Application chosen for the promotion. A commit in runtime then sets that Application's `targetRevision` on `ff-logistic` to the same SHA.
+  Done when: staging is Healthy on that SHA, `ff-logistic` follows only after the promotion commit, and no publish workflow runs for the commit.
+- [ ] **S14-05 Write the first run** · docs
+  `try-workflows.adoc`: the hand-submitted Workflow, the November CronWorkflow run (200, no second mail), the event-started Workflow, and the promotion commit. After the cluster has shown them.
 
 ## S15–S16 — Partner gateways, after S14
 
