@@ -34,6 +34,7 @@
 * xref:runtime::cluster-guide.adoc[Cluster guide]
 * xref:switching.adoc[Switching sides: what happens]
 * xref:try-tracing.adoc[Tracing with Jaeger]
+* xref:try-workflows.adoc[Workflows, events and a second cluster]
 * xref:plan.adoc[Plan]
 
 .Repositories

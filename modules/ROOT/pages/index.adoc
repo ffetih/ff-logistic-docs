@@ -115,7 +115,7 @@ image::reporting/console-report.png[Console Rapor page showing generated 2026-11
 | Messaging & Contracts | Apache Kafka 4.2 (KRaft), transactional outbox (`event_publication`), JSON contract tests (`ff-contracts`)
 | Optimization & Storage | Timefold Solver (time windows), RustFS (S3-compatible, SigV4 presigned write-once links)
 | Identity & Edge | Keycloak 26.8, dedicated Identity facade + JWKS, nginx single-origin console & gateway
-| Observability & Delivery | OpenTelemetry, Jaeger 2.4, k3d, Argo CD 3.6, Argo Rollouts 1.10, Helm, Kustomize, GitHub Actions, GHCR, k6
+| Observability & Delivery | OpenTelemetry, Jaeger 2.4, k3d, Argo CD 3.6, Argo Rollouts 1.10, Argo Workflows 4.1.6, Argo Events 1.9.11, Helm, Kustomize, GitHub Actions, GHCR, k6
 |===
 
 [[guides-by-role]]
@@ -165,8 +165,8 @@ Build the six repositories in order, run and debug services from IntelliJ IDEA a
 Inspect declarative GitOps, single-commit architecture switching, canary rollouts with automated health analysis, and distributed tracing.
 
 * *Core reading path:* xref:gitops.adoc[GitOps: Argo CD & Rollouts] → xref:delivery.adoc[Delivery: CI, Maven, GHCR] → xref:runtime::cluster-guide.adoc[Cluster Guide] → xref:switching.adoc[Switching Sides]
-* *Observability & drills:* xref:try-tracing.adoc[Distributed Tracing (Jaeger 2.4)], xref:try-load.adoc[k6 Load & Failure Drills]
-* *Roadmap:* xref:plan.adoc[Plan] — S0–S9, S12 and S13 complete; S14 multi-cluster/workflows and S15–S16 partner gateways next.
+* *Observability & drills:* xref:try-tracing.adoc[Distributed Tracing (Jaeger 2.4)], xref:try-workflows.adoc[Workflows, events and promotion], xref:try-load.adoc[k6 Load & Failure Drills]
+* *Roadmap:* xref:plan.adoc[Plan] — S0–S9, S12 and S13 complete; S14's first run is written; S15–S16 partner gateways follow the S14 tag.
 ====
 
 [[role-enduser]]
