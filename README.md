@@ -6,7 +6,7 @@ Most "monolith vs. microservices" discussions compare a real system with an imag
 
 That makes the comparison concrete. The same request, the same data and the same failure can be measured on both. The results go into a comparison guide, not into opinions.
 
-> **Live Documentation Site:** [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/) · **Author:** [Fatih Fetih (LinkedIn)](https://www.linkedin.com/in/fatihfetih/)
+> **Live Documentation Site:** [ffetih.github.io/ff-logistic-docs](https://ffetih.github.io/ff-logistic-docs/) · **Author:** [Fatih Şahin (LinkedIn)](https://www.linkedin.com/in/fatihfetih/)
 >
 > **Status:** **Closed at S14** (2026-11-23). Both implementations (`modulith` and `services`), the measured comparison (S7), Superset (S8), the console on `:8090` (S9), Jaeger on `:16686` (S12), `shared/reporting` with Mailpit on `:8092` (S13), and Argo Workflows, Argo Events and promotion from `ff-logistic-staging` (S14) are on the cluster. Tag `s14` is on shared, runtime and docs. base, modulith and services stay at `s12`. S15–S16 (Northfield, Corvane) stay on the plan and are not started. S06-05, S06-06, S07-03 and S07-06 stay open. See [backlog.md](backlog.md).
 
